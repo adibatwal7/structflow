@@ -15,9 +15,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff","mypy"]
 
-[tool.htach.build.targets.wheel]
+[tool.hatch.build.targets.wheel]
 packages = ["src/structflow"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = [".", "src"]

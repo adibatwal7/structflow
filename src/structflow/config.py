@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     """Application settings and configuration loaded from environment or .env file."""
 
     model_config = SettingsConfigDict(
+        env_prefix="STRUCTFLOW_",
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
@@ -18,8 +19,8 @@ class Settings(BaseSettings):
         default="http://localhost:8000/v1",
         description="Base URL for the OpenAI-compatible vLLM server endpoint",
     )
-    vllm_api_key: str = Field(
-        default="EMPTY",
+    vllm_api_key: SecretStr = Field(
+        default=SecretStr("EMPTY"),
         description="API key for authentication with the vLLM server",
     )
     model_name: str = Field(
@@ -27,38 +28,31 @@ class Settings(BaseSettings):
         description="Identifier of the model to query",
     )
 
-    # Number rules:
-    # gt: strictly greater than (>)
-    # ge: at least / greater than or equal to (>=)
-    # le: at most / less than or equal to (<=)
-    temperature: float = Field(
-        default=0.7,
-        ge=0.0,
-        le=2.0,
-        description="Sampling temperature: at least 0.0 (ge=0.0), at most 2.0 (le=2.0)",
-    )
-    top_p: float = Field(
-        default=1.0,
-        gt=0.0,
-        le=1.0,
-        description="Nucleus sampling probability: greater than 0.0 (gt=0.0), at most 1.0 (le=1.0)",
-    )
-    max_tokens: int = Field(
-        default=2048,
-        gt=0,
-        le=32768,
-        description="Maximum tokens to generate: greater than 0 (gt=0), at most 32768 (le=32768)",
-    )
-    timeout: float = Field(
+    # Phase 2 Operational & Batching Settings:
+    # Units in names: request_timeout_s, microbatch_max_wait_ms
+    request_timeout_s: float = Field(
         default=60.0,
         gt=0.0,
-        description="HTTP request timeout in seconds: greater than 0.0 (gt=0.0)",
+        description="HTTP request timeout in seconds: strictly greater than 0.0 (gt=0.0)",
     )
-    max_retries: int = Field(
-        default=3,
+    max_inflight_generation: int = Field(
+        default=10,
+        gt=0,
+        description="Maximum concurrent generation requests in flight: strictly greater than 0 (gt=0)",
+    )
+    microbatch_max_size: int = Field(
+        default=8,
+        gt=0,
+        description="Maximum microbatch size: strictly greater than 0 (gt=0)",
+    )
+    microbatch_max_wait_ms: int = Field(
+        default=50,
         ge=0,
-        le=10,
-        description="Maximum retry attempts: at least 0 (ge=0), at most 10 (le=10)",
+        description="Maximum wait time in ms before dispatching microbatch: at least 0 (ge=0)",
+    )
+    log_level: str = Field(
+        default="INFO",
+        description="Logging level (e.g. DEBUG, INFO, WARNING, ERROR)",
     )
 
     @field_validator("vllm_base_url")
@@ -82,7 +76,3 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Return a cached instance of the application settings."""
     return Settings()
-
-
-# Default singleton settings instance
-settings = get_settings()
