@@ -52,7 +52,11 @@ class TestNumberRules:
         with pytest.raises(ValidationError):
             Settings(_env_file=None, request_timeout_s=-1.0)
 
-    # max_inflight_generation: gt=0
+    # max_inflight_generation: gt=0, default=64
+    def test_max_inflight_generation_default(self):
+        s = Settings(_env_file=None)
+        assert s.max_inflight_generation == 64
+
     def test_max_inflight_generation_positive(self):
         s = Settings(_env_file=None, max_inflight_generation=1)
         assert s.max_inflight_generation == 1
@@ -74,16 +78,35 @@ class TestNumberRules:
         with pytest.raises(ValidationError):
             Settings(_env_file=None, microbatch_max_size=-2)
 
-    # microbatch_max_wait_ms: ge=0
-    def test_microbatch_max_wait_ms_zero_or_positive(self):
+    # microbatch_max_wait_ms: ge=0, le=100, default=5
+    def test_microbatch_max_wait_ms_default(self):
+        s = Settings(_env_file=None)
+        assert s.microbatch_max_wait_ms == 5
+
+    def test_microbatch_max_wait_ms_boundaries(self):
         s0 = Settings(_env_file=None, microbatch_max_wait_ms=0)
         assert s0.microbatch_max_wait_ms == 0
-        s50 = Settings(_env_file=None, microbatch_max_wait_ms=50)
-        assert s50.microbatch_max_wait_ms == 50
+        s100 = Settings(_env_file=None, microbatch_max_wait_ms=100)
+        assert s100.microbatch_max_wait_ms == 100
 
     def test_microbatch_max_wait_ms_negative_rejected(self):
         with pytest.raises(ValidationError):
             Settings(_env_file=None, microbatch_max_wait_ms=-1)
+
+    def test_microbatch_max_wait_ms_above_cap_rejected(self):
+        with pytest.raises(ValidationError):
+            Settings(_env_file=None, microbatch_max_wait_ms=101)
+
+
+class TestLogLevelValidation:
+    def test_valid_log_levels(self):
+        for level in ("DEBUG", "INFO", "WARNING", "ERROR"):
+            s = Settings(_env_file=None, log_level=level)  # type: ignore[arg-type]
+            assert s.log_level == level
+
+    def test_invalid_log_level_rejected(self):
+        with pytest.raises(ValidationError):
+            Settings(_env_file=None, log_level="LOUD")  # type: ignore[arg-type]
 
 
 class TestSecretStrAndEnvPrefix:

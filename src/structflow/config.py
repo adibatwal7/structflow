@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -36,7 +37,7 @@ class Settings(BaseSettings):
         description="HTTP request timeout in seconds: strictly greater than 0.0 (gt=0.0)",
     )
     max_inflight_generation: int = Field(
-        default=10,
+        default=64,
         gt=0,
         description="Maximum concurrent generation requests in flight: strictly greater than 0 (gt=0)",
     )
@@ -46,14 +47,12 @@ class Settings(BaseSettings):
         description="Maximum microbatch size: strictly greater than 0 (gt=0)",
     )
     microbatch_max_wait_ms: int = Field(
-        default=50,
+        default=5,
         ge=0,
-        description="Maximum wait time in ms before dispatching microbatch: at least 0 (ge=0)",
+        le=100,
+        description="Maximum wait time in ms before dispatching microbatch: at least 0 (ge=0), at most 100 (le=100)",
     )
-    log_level: str = Field(
-        default="INFO",
-        description="Logging level (e.g. DEBUG, INFO, WARNING, ERROR)",
-    )
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
     @field_validator("vllm_base_url")
     @classmethod
