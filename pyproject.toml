@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "structflow"
+requires-python = ">=3.12"
+version = "0.1.0"
+dependencies = [
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3"
+]
+
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff","mypy"]
+
+[tool.htach.build.targets.wheel]
+packages = ["src/structflow"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "src"]
