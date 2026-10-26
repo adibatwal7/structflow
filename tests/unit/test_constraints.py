@@ -1,7 +1,6 @@
-import json
+from typing import Any
 
 import pytest
-from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from structflow.schemas.constraints import (
@@ -55,9 +54,7 @@ class TestJsonSchemaConstraint:
         for _ in range(MAX_SCHEMA_DEPTH):
             node = {"type": "object", "properties": {"x": node}}
         with pytest.raises(ValidationError) as exc_info:
-            CONSTRAINT_ADAPTER.validate_python(
-                {"type": "json_schema", "schema": node}
-            )
+            CONSTRAINT_ADAPTER.validate_python({"type": "json_schema", "schema": node})
         assert "depth" in str(exc_info.value)
 
     def test_rejects_external_ref(self) -> None:
@@ -108,8 +105,14 @@ class TestJsonSchemaConstraint:
 
     def test_cache_key_respects_field_order(self) -> None:
         # Swapping property order should change the key
-        schema1 = {"type": "object", "properties": {"a": {"type": "string"}, "b": {"type": "number"}}}
-        schema2 = {"type": "object", "properties": {"b": {"type": "number"}, "a": {"type": "string"}}}
+        schema1 = {
+            "type": "object",
+            "properties": {"a": {"type": "string"}, "b": {"type": "number"}},
+        }
+        schema2 = {
+            "type": "object",
+            "properties": {"b": {"type": "number"}, "a": {"type": "string"}},
+        }
         c1 = CONSTRAINT_ADAPTER.validate_python(
             {"type": "json_schema", "schema": schema1}
         )

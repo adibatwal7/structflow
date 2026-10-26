@@ -3,9 +3,9 @@ import json
 import re
 from typing import Annotated, Any, Final, Literal
 
-from pydantic import Field, TypeAdapter, field_validator
+from pydantic import AfterValidator, Field, TypeAdapter, field_validator
 
-from .common import NonBlankLabel, StrictModel
+from .common import NonBlankLabel, StrictModel, require_unique
 
 MAX_SCHEMA_BYTES: Final = 64_000
 MAX_SCHEMA_DEPTH: Final = 16
@@ -118,16 +118,11 @@ class RegexConstraint(_ConstraintBase):
 
 class ChoiceConstraint(_ConstraintBase):
     type: Literal["choice"] = "choice"
-    choices: tuple[NonBlankLabel, ...] = Field(min_length=2, max_length=MAX_CHOICES)
-
-    @field_validator("choices")
-    @classmethod
-    def _check_choices(
-        cls, value: tuple[NonBlankLabel, ...]
-    ) -> tuple[NonBlankLabel, ...]:
-        if len(set(value)) != len(value):
-            raise ValueError("choices must be unique")
-        return value
+    choices: Annotated[
+        tuple[NonBlankLabel, ...],
+        Field(min_length=2, max_length=MAX_CHOICES),
+        AfterValidator(require_unique),
+    ]
 
 
 class GrammarConstraint(_ConstraintBase):

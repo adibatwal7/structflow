@@ -17,6 +17,12 @@ def _require_non_blank(value: str) -> str:
     return value  # return the ORIGINAL value, never the stripped one
 
 
+def require_unique(values: tuple[str, ...]) -> tuple[str, ...]:
+    if len(set(values)) != len(values):
+        raise ValueError("values must be unique")
+    return values
+
+
 NonBlankText = Annotated[
     str,
     StringConstraints(min_length=1, max_length=MAX_TEXT_CHARS),
