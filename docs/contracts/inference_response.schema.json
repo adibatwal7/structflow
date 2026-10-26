@@ -1,0 +1,335 @@
+{
+  "$defs": {
+    "ClassifyResult": {
+      "additionalProperties": false,
+      "properties": {
+        "task": {
+          "const": "classify",
+          "title": "Task",
+          "type": "string"
+        },
+        "labels": {
+          "items": {
+            "$ref": "#/$defs/LabelScore"
+          },
+          "minItems": 1,
+          "title": "Labels",
+          "type": "array"
+        }
+      },
+      "required": [
+        "task",
+        "labels"
+      ],
+      "title": "ClassifyResult",
+      "type": "object"
+    },
+    "ExtractSpansResult": {
+      "additionalProperties": false,
+      "properties": {
+        "task": {
+          "const": "extract_spans",
+          "title": "Task",
+          "type": "string"
+        },
+        "spans": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Span"
+          },
+          "title": "Spans",
+          "type": "array"
+        }
+      },
+      "required": [
+        "task"
+      ],
+      "title": "ExtractSpansResult",
+      "type": "object"
+    },
+    "FinishReason": {
+      "enum": [
+        "stop",
+        "length"
+      ],
+      "title": "FinishReason",
+      "type": "string"
+    },
+    "GenerateResult": {
+      "additionalProperties": false,
+      "properties": {
+        "task": {
+          "const": "generate",
+          "title": "Task",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "finish_reason": {
+          "$ref": "#/$defs/FinishReason"
+        }
+      },
+      "required": [
+        "task",
+        "text",
+        "finish_reason"
+      ],
+      "title": "GenerateResult",
+      "type": "object"
+    },
+    "LabelScore": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "score": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Score",
+          "type": "number"
+        }
+      },
+      "required": [
+        "label",
+        "score"
+      ],
+      "title": "LabelScore",
+      "type": "object"
+    },
+    "Route": {
+      "enum": [
+        "softmax_head",
+        "span_head",
+        "llm_label_scoring",
+        "constrained_generation",
+        "unconstrained_generation"
+      ],
+      "title": "Route",
+      "type": "string"
+    },
+    "Span": {
+      "additionalProperties": false,
+      "properties": {
+        "start": {
+          "minimum": 0,
+          "title": "Start",
+          "type": "integer"
+        },
+        "end": {
+          "minimum": 0,
+          "title": "End",
+          "type": "integer"
+        },
+        "label": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "score": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Score",
+          "type": "number"
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "label",
+        "text",
+        "score"
+      ],
+      "title": "Span",
+      "type": "object"
+    },
+    "StructuredResult": {
+      "additionalProperties": false,
+      "properties": {
+        "task": {
+          "const": "structured",
+          "title": "Task",
+          "type": "string"
+        },
+        "output": {
+          "additionalProperties": true,
+          "title": "Output",
+          "type": "object"
+        },
+        "raw_text": {
+          "title": "Raw Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task",
+        "output",
+        "raw_text"
+      ],
+      "title": "StructuredResult",
+      "type": "object"
+    },
+    "Timings": {
+      "additionalProperties": false,
+      "properties": {
+        "queue_ms": {
+          "minimum": 0.0,
+          "title": "Queue Ms",
+          "type": "number"
+        },
+        "inference_ms": {
+          "minimum": 0.0,
+          "title": "Inference Ms",
+          "type": "number"
+        },
+        "total_ms": {
+          "minimum": 0.0,
+          "title": "Total Ms",
+          "type": "number"
+        },
+        "compile_ms": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Compile Ms"
+        },
+        "ttft_ms": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ttft Ms"
+        }
+      },
+      "required": [
+        "queue_ms",
+        "inference_ms",
+        "total_ms"
+      ],
+      "title": "Timings",
+      "type": "object"
+    },
+    "Usage": {
+      "additionalProperties": false,
+      "properties": {
+        "prompt_tokens": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Prompt Tokens",
+          "type": "integer"
+        },
+        "completion_tokens": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Completion Tokens",
+          "type": "integer"
+        },
+        "forward_passes": {
+          "minimum": 0,
+          "title": "Forward Passes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "forward_passes"
+      ],
+      "title": "Usage",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "request_id": {
+      "pattern": "^[A-Za-z0-9._-]{1,64}$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "model": {
+      "minLength": 1,
+      "title": "Model",
+      "type": "string"
+    },
+    "route": {
+      "$ref": "#/$defs/Route"
+    },
+    "route_trail": {
+      "items": {
+        "$ref": "#/$defs/Route"
+      },
+      "minItems": 1,
+      "title": "Route Trail",
+      "type": "array"
+    },
+    "degraded": {
+      "default": false,
+      "title": "Degraded",
+      "type": "boolean"
+    },
+    "result": {
+      "discriminator": {
+        "mapping": {
+          "classify": "#/$defs/ClassifyResult",
+          "extract_spans": "#/$defs/ExtractSpansResult",
+          "generate": "#/$defs/GenerateResult",
+          "structured": "#/$defs/StructuredResult"
+        },
+        "propertyName": "task"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ClassifyResult"
+        },
+        {
+          "$ref": "#/$defs/ExtractSpansResult"
+        },
+        {
+          "$ref": "#/$defs/StructuredResult"
+        },
+        {
+          "$ref": "#/$defs/GenerateResult"
+        }
+      ],
+      "title": "Result"
+    },
+    "usage": {
+      "$ref": "#/$defs/Usage"
+    },
+    "timings": {
+      "$ref": "#/$defs/Timings"
+    }
+  },
+  "required": [
+    "request_id",
+    "model",
+    "route",
+    "route_trail",
+    "result",
+    "usage",
+    "timings"
+  ],
+  "title": "InferenceResponse",
+  "type": "object"
+}

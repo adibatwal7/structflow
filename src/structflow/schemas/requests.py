@@ -43,11 +43,13 @@ class _RequestBase(StrictModel):
 
 # Part 4: ClassifyRequest
 class ClassifyRequest(_RequestBase):
-    task: Literal["classify"] = "classify"
+    task: Literal["classify"]
     text: NonBlankText
     labels: Annotated[
         tuple[NonBlankLabel, ...],
-        Field(min_length=2, max_length=MAX_LABELS),
+        Field(
+            min_length=2, max_length=MAX_LABELS, json_schema_extra={"uniqueItems": True}
+        ),
         AfterValidator(require_unique),
     ]
     multi_label: bool = False
@@ -67,12 +69,16 @@ class ClassifyRequest(_RequestBase):
 
 # Part 5: ExtractSpansRequest
 class ExtractSpansRequest(_RequestBase):
-    task: Literal["extract_spans"] = "extract_spans"
+    task: Literal["extract_spans"]
     text: NonBlankText
     entity_types: (
         Annotated[
             tuple[NonBlankLabel, ...],
-            Field(min_length=1, max_length=MAX_ENTITY_TYPES),
+            Field(
+                min_length=1,
+                max_length=MAX_ENTITY_TYPES,
+                json_schema_extra={"uniqueItems": True},
+            ),
             AfterValidator(require_unique),
         ]
         | None
@@ -101,13 +107,13 @@ class _ChatRequestBase(_RequestBase):
 
 # Part 6 continued: StructuredRequest and GenerateRequest
 class StructuredRequest(_ChatRequestBase):
-    task: Literal["structured"] = "structured"
+    task: Literal["structured"]
     constraint: Constraint
     allow_unconstrained_fallback: bool = False
 
 
 class GenerateRequest(_ChatRequestBase):
-    task: Literal["generate"] = "generate"
+    task: Literal["generate"]
 
 
 # Part 7: The union

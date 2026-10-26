@@ -1,3 +1,5 @@
+import typing
+
 import pytest
 from pydantic import BaseModel, ValidationError
 
@@ -90,7 +92,7 @@ class TestTaskDiscrimination:
             StructuredRequest,
             GenerateRequest,
         )
-        tags = {m.model_fields["task"].default for m in models}
+        tags = {typing.get_args(m.model_fields["task"].annotation)[0] for m in models}
         assert tags == {t.value for t in TaskType}
 
 

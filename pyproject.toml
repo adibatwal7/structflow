@@ -13,7 +13,7 @@ dependencies = [
 
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff","mypy"]
+dev = ["pytest>=8", "ruff", "mypy", "jsonschema>=4.23"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/structflow"]

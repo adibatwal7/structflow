@@ -1,0 +1,506 @@
+{
+  "$defs": {
+    "ChatMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "enum": [
+            "system",
+            "user",
+            "assistant"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "content": {
+          "maxLength": 32000,
+          "minLength": 1,
+          "title": "Content",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "content"
+      ],
+      "title": "ChatMessage",
+      "type": "object"
+    },
+    "ChoiceConstraint": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "choice",
+          "title": "Type",
+          "type": "string"
+        },
+        "choices": {
+          "items": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 256,
+          "minItems": 2,
+          "title": "Choices",
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "type",
+        "choices"
+      ],
+      "title": "ChoiceConstraint",
+      "type": "object"
+    },
+    "ClassifyRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "request_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9._-]{1,64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request Id"
+        },
+        "metadata": {
+          "additionalProperties": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "maxProperties": 16,
+          "propertyNames": {
+            "maxLength": 64,
+            "minLength": 1
+          },
+          "title": "Metadata",
+          "type": "object"
+        },
+        "task": {
+          "const": "classify",
+          "title": "Task",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 20000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "labels": {
+          "items": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 256,
+          "minItems": 2,
+          "title": "Labels",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "multi_label": {
+          "default": false,
+          "title": "Multi Label",
+          "type": "boolean"
+        },
+        "threshold": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Threshold"
+        },
+        "top_k": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Top K"
+        }
+      },
+      "required": [
+        "task",
+        "text",
+        "labels"
+      ],
+      "title": "ClassifyRequest",
+      "type": "object"
+    },
+    "ExtractSpansRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "request_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9._-]{1,64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request Id"
+        },
+        "metadata": {
+          "additionalProperties": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "maxProperties": 16,
+          "propertyNames": {
+            "maxLength": 64,
+            "minLength": 1
+          },
+          "title": "Metadata",
+          "type": "object"
+        },
+        "task": {
+          "const": "extract_spans",
+          "title": "Task",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 20000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "entity_types": {
+          "anyOf": [
+            {
+              "items": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 64,
+              "minItems": 1,
+              "type": "array",
+              "uniqueItems": true
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Entity Types"
+        },
+        "min_score": {
+          "default": 0.5,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Min Score",
+          "type": "number"
+        }
+      },
+      "required": [
+        "task",
+        "text"
+      ],
+      "title": "ExtractSpansRequest",
+      "type": "object"
+    },
+    "GenerateRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "request_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9._-]{1,64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request Id"
+        },
+        "metadata": {
+          "additionalProperties": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "maxProperties": 16,
+          "propertyNames": {
+            "maxLength": 64,
+            "minLength": 1
+          },
+          "title": "Metadata",
+          "type": "object"
+        },
+        "messages": {
+          "items": {
+            "$ref": "#/$defs/ChatMessage"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "title": "Messages",
+          "type": "array"
+        },
+        "sampling": {
+          "$ref": "#/$defs/SamplingParams"
+        },
+        "task": {
+          "const": "generate",
+          "title": "Task",
+          "type": "string"
+        }
+      },
+      "required": [
+        "messages",
+        "task"
+      ],
+      "title": "GenerateRequest",
+      "type": "object"
+    },
+    "GrammarConstraint": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "grammar",
+          "title": "Type",
+          "type": "string"
+        },
+        "grammar": {
+          "maxLength": 32000,
+          "minLength": 1,
+          "title": "Grammar",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "grammar"
+      ],
+      "title": "GrammarConstraint",
+      "type": "object"
+    },
+    "JsonSchemaConstraint": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "json_schema",
+          "title": "Type",
+          "type": "string"
+        },
+        "schema": {
+          "additionalProperties": true,
+          "title": "Schema",
+          "type": "object"
+        }
+      },
+      "required": [
+        "type",
+        "schema"
+      ],
+      "title": "JsonSchemaConstraint",
+      "type": "object"
+    },
+    "RegexConstraint": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "regex",
+          "title": "Type",
+          "type": "string"
+        },
+        "pattern": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Pattern",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "pattern"
+      ],
+      "title": "RegexConstraint",
+      "type": "object"
+    },
+    "SamplingParams": {
+      "additionalProperties": false,
+      "properties": {
+        "temperature": {
+          "default": 0.0,
+          "maximum": 2.0,
+          "minimum": 0.0,
+          "title": "Temperature",
+          "type": "number"
+        },
+        "top_p": {
+          "default": 1.0,
+          "exclusiveMinimum": 0.0,
+          "maximum": 1.0,
+          "title": "Top P",
+          "type": "number"
+        },
+        "max_tokens": {
+          "default": 512,
+          "maximum": 4096,
+          "minimum": 1,
+          "title": "Max Tokens",
+          "type": "integer"
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seed"
+        },
+        "stop": {
+          "default": [],
+          "items": {
+            "maxLength": 32,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 4,
+          "title": "Stop",
+          "type": "array"
+        }
+      },
+      "title": "SamplingParams",
+      "type": "object"
+    },
+    "StructuredRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "request_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9._-]{1,64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request Id"
+        },
+        "metadata": {
+          "additionalProperties": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "maxProperties": 16,
+          "propertyNames": {
+            "maxLength": 64,
+            "minLength": 1
+          },
+          "title": "Metadata",
+          "type": "object"
+        },
+        "messages": {
+          "items": {
+            "$ref": "#/$defs/ChatMessage"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "title": "Messages",
+          "type": "array"
+        },
+        "sampling": {
+          "$ref": "#/$defs/SamplingParams"
+        },
+        "task": {
+          "const": "structured",
+          "title": "Task",
+          "type": "string"
+        },
+        "constraint": {
+          "discriminator": {
+            "mapping": {
+              "choice": "#/$defs/ChoiceConstraint",
+              "grammar": "#/$defs/GrammarConstraint",
+              "json_schema": "#/$defs/JsonSchemaConstraint",
+              "regex": "#/$defs/RegexConstraint"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/JsonSchemaConstraint"
+            },
+            {
+              "$ref": "#/$defs/RegexConstraint"
+            },
+            {
+              "$ref": "#/$defs/ChoiceConstraint"
+            },
+            {
+              "$ref": "#/$defs/GrammarConstraint"
+            }
+          ],
+          "title": "Constraint"
+        },
+        "allow_unconstrained_fallback": {
+          "default": false,
+          "title": "Allow Unconstrained Fallback",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "messages",
+        "task",
+        "constraint"
+      ],
+      "title": "StructuredRequest",
+      "type": "object"
+    }
+  },
+  "discriminator": {
+    "mapping": {
+      "classify": "#/$defs/ClassifyRequest",
+      "extract_spans": "#/$defs/ExtractSpansRequest",
+      "generate": "#/$defs/GenerateRequest",
+      "structured": "#/$defs/StructuredRequest"
+    },
+    "propertyName": "task"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/ClassifyRequest"
+    },
+    {
+      "$ref": "#/$defs/ExtractSpansRequest"
+    },
+    {
+      "$ref": "#/$defs/StructuredRequest"
+    },
+    {
+      "$ref": "#/$defs/GenerateRequest"
+    }
+  ]
+}

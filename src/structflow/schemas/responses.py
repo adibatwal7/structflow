@@ -33,7 +33,7 @@ class LabelScore(StrictModel):
 
 
 class ClassifyResult(StrictModel):
-    task: Literal["classify"] = "classify"
+    task: Literal["classify"]
     labels: tuple[LabelScore, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -61,19 +61,19 @@ class Span(StrictModel):
 
 
 class ExtractSpansResult(StrictModel):
-    task: Literal["extract_spans"] = "extract_spans"
+    task: Literal["extract_spans"]
     spans: tuple[Span, ...] = ()
 
 
 class StructuredResult(StrictModel):
-    task: Literal["structured"] = "structured"
+    task: Literal["structured"]
     output: dict[str, Any]
     raw_text: str
     # No finish_reason - truncated output is an error, not a result
 
 
 class GenerateResult(StrictModel):
-    task: Literal["generate"] = "generate"
+    task: Literal["generate"]
     text: str
     finish_reason: FinishReason
 

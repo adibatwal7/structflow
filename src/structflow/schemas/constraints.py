@@ -27,7 +27,7 @@ class _ConstraintBase(StrictModel):
 
 
 class JsonSchemaConstraint(_ConstraintBase):
-    type: Literal["json_schema"] = "json_schema"
+    type: Literal["json_schema"]
     json_schema: dict[str, Any] = Field(alias="schema")
 
     @field_validator("json_schema")
@@ -87,7 +87,7 @@ def _iter_refs(node: Any) -> list[Any]:
 
 
 class RegexConstraint(_ConstraintBase):
-    type: Literal["regex"] = "regex"
+    type: Literal["regex"]
     pattern: str = Field(min_length=1, max_length=MAX_REGEX_CHARS)
 
     @field_validator("pattern")
@@ -117,16 +117,20 @@ class RegexConstraint(_ConstraintBase):
 
 
 class ChoiceConstraint(_ConstraintBase):
-    type: Literal["choice"] = "choice"
+    type: Literal["choice"]
     choices: Annotated[
         tuple[NonBlankLabel, ...],
-        Field(min_length=2, max_length=MAX_CHOICES),
+        Field(
+            min_length=2,
+            max_length=MAX_CHOICES,
+            json_schema_extra={"uniqueItems": True},
+        ),
         AfterValidator(require_unique),
     ]
 
 
 class GrammarConstraint(_ConstraintBase):
-    type: Literal["grammar"] = "grammar"
+    type: Literal["grammar"]
     grammar: str = Field(min_length=1, max_length=MAX_GRAMMAR_CHARS)
 
     @field_validator("grammar")
