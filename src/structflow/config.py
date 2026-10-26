@@ -65,9 +65,7 @@ class Settings(BaseSettings):
         """
         v = v.strip()
         if not v.startswith(("http://", "https://")):
-            raise ValueError(
-                "vllm_base_url must start with 'http://' or 'https://'"
-            )
+            raise ValueError("vllm_base_url must start with 'http://' or 'https://'")
         return v.rstrip("/")
 
 
