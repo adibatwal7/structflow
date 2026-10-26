@@ -283,7 +283,7 @@ class TestExtractSpansRequest:
         req = INFERENCE_REQUEST_ADAPTER.validate_python(
             {
                 "task": "extract_spans",
-                "text": " Alice met Bob",
+                "text": "  Alice met Bob",
                 "entity_types": ["PERSON"],
             }
         )
