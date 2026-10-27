@@ -31,7 +31,7 @@ class RequestIdMiddleware:
 
         async def send_with_id(message: Message) -> None:
             if message["type"] == "http.response.start":
-                MutableHeaders(scope=message)[HEADER] = request_id
+                MutableHeaders(scope=message)[HEADER] = scope["state"]["request_id"]
             await send(message)
 
         try:
