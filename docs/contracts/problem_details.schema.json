@@ -7,7 +7,9 @@
         "output_truncated",
         "backend_saturated",
         "upstream_timeout",
-        "internal_error"
+        "internal_error",
+        "not_found",
+        "method_not_allowed"
       ],
       "title": "ErrorCode",
       "type": "string"

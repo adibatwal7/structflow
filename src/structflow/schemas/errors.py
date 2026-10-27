@@ -14,6 +14,8 @@ class ErrorCode(StrEnum):
     BACKEND_SATURATED = "backend_saturated"
     UPSTREAM_TIMEOUT = "upstream_timeout"
     INTERNAL_ERROR = "internal_error"
+    NOT_FOUND = "not_found"
+    METHOD_NOT_ALLOWED = "method_not_allowed"
 
 
 ERROR_CATALOG: Final[dict[ErrorCode, tuple[int, str]]] = {
@@ -23,6 +25,8 @@ ERROR_CATALOG: Final[dict[ErrorCode, tuple[int, str]]] = {
     ErrorCode.BACKEND_SATURATED: (503, "Inference backend is at capacity"),
     ErrorCode.UPSTREAM_TIMEOUT: (504, "Inference backend timed out"),
     ErrorCode.INTERNAL_ERROR: (500, "Internal server error"),
+    ErrorCode.NOT_FOUND: (404, "Resource not found"),
+    ErrorCode.METHOD_NOT_ALLOWED: (405, "Method not allowed"),
 }
 
 PROBLEM_JSON: Final = "application/problem+json"
