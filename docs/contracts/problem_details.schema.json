@@ -9,7 +9,9 @@
         "upstream_timeout",
         "internal_error",
         "not_found",
-        "method_not_allowed"
+        "method_not_allowed",
+        "not_ready",
+        "unsupported_request"
       ],
       "title": "ErrorCode",
       "type": "string"

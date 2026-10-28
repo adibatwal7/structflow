@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Protocol
 
 from structflow.schemas.requests import (
@@ -15,12 +16,21 @@ from structflow.schemas.responses import (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class EngineOutput[R]:
+    """What every engine returns: the result, what it cost, and how long it queued."""
+
+    result: R
+    usage: Usage
+    queue_ms: float = 0.0
+
+
 class Classifier(Protocol):
     name: str
 
     async def classify(
         self, request: ClassifyRequest
-    ) -> tuple[ClassifyResult, Usage]: ...
+    ) -> EngineOutput[ClassifyResult]: ...
 
 
 class SpanExtractor(Protocol):
@@ -28,7 +38,7 @@ class SpanExtractor(Protocol):
 
     async def extract(
         self, request: ExtractSpansRequest
-    ) -> tuple[ExtractSpansResult, Usage]: ...
+    ) -> EngineOutput[ExtractSpansResult]: ...
 
 
 class GenerationBackend(Protocol):
@@ -36,11 +46,11 @@ class GenerationBackend(Protocol):
 
     async def generate_structured(
         self, request: StructuredRequest
-    ) -> tuple[StructuredResult, Usage]: ...
+    ) -> EngineOutput[StructuredResult]: ...
 
     async def generate(
         self, request: GenerateRequest
-    ) -> tuple[GenerateResult, Usage]: ...
+    ) -> EngineOutput[GenerateResult]: ...
 
 
 class UnsupportedRequestError(RuntimeError):

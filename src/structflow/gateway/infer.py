@@ -1,18 +1,29 @@
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, Request
 
 from structflow.routing.router import Router
-from structflow.schemas.errors import ProblemDetails
+from structflow.schemas.errors import ErrorCode, ProblemDetails
 from structflow.schemas.requests import InferenceRequest
 from structflow.schemas.responses import InferenceResponse
 
+from .problems import StructFlowError
+
 router = APIRouter(tags=["inference"])
-_PROBLEM = {"model": ProblemDetails, "content": {"application/problem+json": {}}}
+_PROBLEM: dict[str, Any] = {
+    "model": ProblemDetails,
+    "content": {"application/problem+json": {}},
+}
 
 
 def get_router(request: Request) -> Router:
-    engine_router: Router = request.app.state.router
+    engine_router: Router | None = request.app.state.router
+    if engine_router is None or not request.app.state.ready:
+        raise StructFlowError(
+            ErrorCode.NOT_READY,
+            "the model is still loading",
+            headers={"Retry-After": "5"},
+        )
     return engine_router
 
 

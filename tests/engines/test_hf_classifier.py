@@ -7,15 +7,19 @@ but the plumbing (tokenize, pad, batch, score) is exactly the real one.
 
 import asyncio
 import math
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
 
+from structflow.config import Settings
+
 pytest.importorskip("torch")
 pytest.importorskip("transformers")
 
 import torch
+from fastapi.testclient import TestClient
 from tokenizers import Tokenizer, models, pre_tokenizers, processors
 from transformers import (
     DistilBertConfig,
@@ -25,6 +29,7 @@ from transformers import (
 
 from structflow.engines.base import UnsupportedRequestError
 from structflow.engines.hf_classifier import HFClassifier
+from structflow.gateway.app import create_app
 from structflow.schemas.requests import ClassifyRequest
 
 pytestmark = pytest.mark.anyio
@@ -92,37 +97,41 @@ async def test_labels_come_from_the_model_config(head: HFClassifier) -> None:
 
 
 async def test_scores_are_a_probability_distribution(head: HFClassifier) -> None:
-    result, usage = await head.classify(request("very good movie"))
-    assert {ls.label for ls in result.labels} == set(LABELS)
-    assert math.isclose(sum(ls.score for ls in result.labels), 1.0, rel_tol=1e-6)
-    assert usage.forward_passes == 1
-    assert usage.prompt_tokens == 5  # [CLS] very good movie [SEP]
+    out = await head.classify(request("very good movie"))
+    assert {ls.label for ls in out.result.labels} == set(LABELS)
+    assert math.isclose(sum(ls.score for ls in out.result.labels), 1.0, rel_tol=1e-6)
+    assert out.usage.forward_passes == 1
+    assert out.usage.prompt_tokens == 5  # [CLS] very good movie [SEP]
+    assert out.queue_ms >= 15  # it waited for the 20 ms batching window
 
 
 async def test_batched_answers_match_one_at_a_time(head: HFClassifier) -> None:
     texts = ["good", "very bad movie", "ok ok ok ok ok ok", "movie"]
     alone = [await head.classify(request(t)) for t in texts]
     together = await asyncio.gather(*(head.classify(request(t)) for t in texts))
-    for (a, _), (b, _) in zip(alone, together, strict=True):
-        assert [ls.label for ls in a.labels] == [ls.label for ls in b.labels]
-        for x, y in zip(a.labels, b.labels, strict=True):
+    for a, b in zip(alone, together, strict=True):
+        assert [ls.label for ls in a.result.labels] == [
+            ls.label for ls in b.result.labels
+        ]
+        for x, y in zip(a.result.labels, b.result.labels, strict=True):
             assert x.score == pytest.approx(y.score, abs=1e-5)
 
 
 async def test_a_subset_of_known_labels_is_allowed(head: HFClassifier) -> None:
-    result, _ = await head.classify(request("good movie", ("positive", "negative")))
+    out = await head.classify(request("good movie", ("positive", "negative")))
+    result = out.result
     assert {ls.label for ls in result.labels} == {"positive", "negative"}
     assert math.isclose(sum(ls.score for ls in result.labels), 1.0, rel_tol=1e-6)
 
 
 async def test_top_k_trims_the_answer(head: HFClassifier) -> None:
-    result, _ = await head.classify(request("good movie", top_k=1))
-    assert len(result.labels) == 1
+    out = await head.classify(request("good movie", top_k=1))
+    assert len(out.result.labels) == 1
 
 
 async def test_long_text_is_truncated_not_rejected(head: HFClassifier) -> None:
-    _, usage = await head.classify(request("good " * 500))
-    assert usage.prompt_tokens == 32
+    out = await head.classify(request("good " * 500))
+    assert out.usage.prompt_tokens == 32
 
 
 @pytest.mark.parametrize(
@@ -138,3 +147,48 @@ async def test_unsupported_requests_are_refused(
     assert not head.supports(bad)
     with pytest.raises(UnsupportedRequestError):
         await head.classify(bad)
+
+
+def wait_for_startup(client: TestClient) -> str:
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        status: str = client.get("/readyz").json()["status"]
+        if status != "starting":
+            return status
+        time.sleep(0.05)
+    raise AssertionError("the model never finished loading")
+
+
+def test_the_app_serves_the_real_head(tiny_model_dir: Path) -> None:
+    settings = Settings(
+        _env_file=None,
+        classifier_backend="hf",
+        classifier_model=str(tiny_model_dir),
+        classifier_device="cpu",
+    )
+    with TestClient(create_app(settings)) as client:
+        assert wait_for_startup(client) == "ready"
+        ok = client.post(
+            "/v1/infer",
+            json={
+                "task": "classify",
+                "text": "good movie",
+                "labels": ["positive", "negative"],
+            },
+        )
+        assert ok.status_code == 200
+        body = ok.json()
+        assert body["route"] == "softmax_head"
+        assert body["model"] == str(tiny_model_dir)
+        assert body["timings"]["queue_ms"] > 0
+
+        unknown = client.post(
+            "/v1/infer",
+            json={
+                "task": "classify",
+                "text": "good movie",
+                "labels": ["positive", "sarcastic"],
+            },
+        )
+        assert unknown.status_code == 422
+        assert unknown.json()["code"] == "unsupported_request"

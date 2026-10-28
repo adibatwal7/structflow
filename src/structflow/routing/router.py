@@ -1,7 +1,12 @@
 import time
 from typing import assert_never
 
-from structflow.engines.base import Classifier, GenerationBackend, SpanExtractor
+from structflow.engines.base import (
+    Classifier,
+    EngineOutput,
+    GenerationBackend,
+    SpanExtractor,
+)
 from structflow.schemas.common import Route
 from structflow.schemas.requests import (
     ClassifyRequest,
@@ -10,7 +15,7 @@ from structflow.schemas.requests import (
     InferenceRequest,
     StructuredRequest,
 )
-from structflow.schemas.responses import InferenceResponse, Result, Timings, Usage
+from structflow.schemas.responses import InferenceResponse, Result, Timings
 
 
 class Router:
@@ -29,31 +34,36 @@ class Router:
         self, request: InferenceRequest, *, request_id: str
     ) -> InferenceResponse:
         started = time.perf_counter()
-        result: Result
-        usage: Usage
+        output: EngineOutput[Result]
         match request:
             case ClassifyRequest():
                 route, model = Route.SOFTMAX_HEAD, self._classifier.name
-                result, usage = await self._classifier.classify(request)
+                output = await self._classifier.classify(request)
             case ExtractSpansRequest():
                 route, model = Route.SPAN_HEAD, self._span_extractor.name
-                result, usage = await self._span_extractor.extract(request)
+                output = await self._span_extractor.extract(request)
             case StructuredRequest():
                 route, model = Route.CONSTRAINED_GENERATION, self._generator.name
-                result, usage = await self._generator.generate_structured(request)
+                output = await self._generator.generate_structured(request)
             case GenerateRequest():
                 route, model = Route.UNCONSTRAINED_GENERATION, self._generator.name
-                result, usage = await self._generator.generate(request)
+                output = await self._generator.generate(request)
             case _:
                 assert_never(request)
-        elapsed_ms = (time.perf_counter() - started) * 1000
+        total_ms = (time.perf_counter() - started) * 1000
+        inference_ms = max(0.0, total_ms - output.queue_ms)
+        timings = Timings(
+            queue_ms=output.queue_ms,
+            inference_ms=inference_ms,
+            total_ms=total_ms,
+        )
         return InferenceResponse(
             route=route,
             model=model,
             route_trail=(route,),
-            result=result,
-            timings=Timings(queue_ms=0.0, inference_ms=elapsed_ms, total_ms=elapsed_ms),
-            usage=usage,
+            result=output.result,
+            timings=timings,
+            usage=output.usage,
             request_id=request_id,
         )
 

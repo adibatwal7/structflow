@@ -6,6 +6,8 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from structflow.engines.base import UnsupportedRequestError
+from structflow.engines.batcher import BatcherClosedError, BatcherFullError
 from structflow.schemas.errors import (
     PROBLEM_JSON,
     ErrorCode,
@@ -18,6 +20,11 @@ from .request_id import HEADER
 logger = logging.getLogger("structflow.gateway")
 
 _HTTP_STATUS_TO_CODE = {404: ErrorCode.NOT_FOUND, 405: ErrorCode.METHOD_NOT_ALLOWED}
+_ENGINE_ERRORS: dict[type[Exception], tuple[ErrorCode, dict[str, str]]] = {
+    BatcherFullError: (ErrorCode.BACKEND_SATURATED, {"Retry-After": "1"}),
+    BatcherClosedError: (ErrorCode.NOT_READY, {"Retry-After": "5"}),
+    UnsupportedRequestError: (ErrorCode.UNSUPPORTED_REQUEST, {}),
+}
 
 
 class StructFlowError(Exception):
@@ -65,6 +72,14 @@ async def _on_structflow_error(request: Request, exc: Exception) -> JSONResponse
     return problem_response(request, problem, exc.headers)
 
 
+async def _on_engine_error(request: Request, exc: Exception) -> JSONResponse:
+    code, headers = next(
+        entry for kind, entry in _ENGINE_ERRORS.items() if isinstance(exc, kind)
+    )
+    problem = ProblemDetails.from_code(code, str(exc), request_id=_request_id(request))
+    return problem_response(request, problem, headers)
+
+
 async def _on_unhandled(request: Request, exc: Exception) -> JSONResponse:
     logger.exception("unhandled error", extra={"request_id": _request_id(request)})
     problem = ProblemDetails.from_code(
@@ -108,4 +123,6 @@ def install_problem_handlers(app: FastAPI) -> None:
     app.add_exception_handler(RequestValidationError, _on_request_validation)
     app.add_exception_handler(ValidationError, _on_pydantic_validation)
     app.add_exception_handler(StarletteHTTPException, _on_http_exception)
+    for kind in _ENGINE_ERRORS:
+        app.add_exception_handler(kind, _on_engine_error)
     app.add_exception_handler(Exception, _on_unhandled)

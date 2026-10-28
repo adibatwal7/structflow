@@ -2,6 +2,7 @@ import json
 import re
 from typing import Any
 
+from structflow.engines.base import EngineOutput
 from structflow.schemas.requests import (
     ClassifyRequest,
     ExtractSpansRequest,
@@ -22,7 +23,7 @@ from structflow.schemas.responses import (
 class FakeClassifier:
     name = "fake-classifier"
 
-    async def classify(self, request: ClassifyRequest) -> tuple[ClassifyResult, Usage]:
+    async def classify(self, request: ClassifyRequest) -> EngineOutput[ClassifyResult]:
         text = request.text.lower()
         raw = [1.0 if label.lower() in text else 0.1 for label in request.labels]
         total = sum(raw)
@@ -34,7 +35,9 @@ class FakeClassifier:
             key=lambda ls: ls.score, reverse=True
         )  # your envelope requires this order
         usage = Usage(prompt_tokens=len(request.text.split()), forward_passes=1)
-        return ClassifyResult(task="classify", labels=tuple(scored)), usage
+        return EngineOutput(
+            result=ClassifyResult(task="classify", labels=tuple(scored)), usage=usage
+        )
 
 
 class FakeSpanExtractor:
@@ -42,7 +45,7 @@ class FakeSpanExtractor:
 
     async def extract(
         self, request: ExtractSpansRequest
-    ) -> tuple[ExtractSpansResult, Usage]:
+    ) -> EngineOutput[ExtractSpansResult]:
         text = request.text
         spans = []
         for m in re.finditer(r"\b[A-Z][a-z]+\b", text):
@@ -56,7 +59,10 @@ class FakeSpanExtractor:
                 )
             )
         usage = Usage(prompt_tokens=len(text.split()), forward_passes=1)
-        return ExtractSpansResult(task="extract_spans", spans=tuple(spans)), usage
+        return EngineOutput(
+            result=ExtractSpansResult(task="extract_spans", spans=tuple(spans)),
+            usage=usage,
+        )
 
 
 class FakeGenerator:
@@ -67,7 +73,7 @@ class FakeGenerator:
 
     async def generate_structured(
         self, request: StructuredRequest
-    ) -> tuple[StructuredResult, Usage]:
+    ) -> EngineOutput[StructuredResult]:
         raw_text = json.dumps(self._structured_output)
         prompt_tokens = sum(len(m.content.split()) for m in request.messages)
         usage = Usage(
@@ -78,9 +84,9 @@ class FakeGenerator:
         result = StructuredResult(
             task="structured", output=self._structured_output, raw_text=raw_text
         )
-        return result, usage
+        return EngineOutput(result=result, usage=usage)
 
-    async def generate(self, request: GenerateRequest) -> tuple[GenerateResult, Usage]:
+    async def generate(self, request: GenerateRequest) -> EngineOutput[GenerateResult]:
         text = f"(fake) you said: {request.messages[-1].content}"
         prompt_tokens = sum(len(m.content.split()) for m in request.messages)
         usage = Usage(
@@ -88,4 +94,7 @@ class FakeGenerator:
             completion_tokens=len(text.split()),
             forward_passes=1 + len(text.split()),
         )
-        return GenerateResult(task="generate", text=text, finish_reason="stop"), usage
+        return EngineOutput(
+            result=GenerateResult(task="generate", text=text, finish_reason="stop"),
+            usage=usage,
+        )

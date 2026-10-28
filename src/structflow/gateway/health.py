@@ -13,8 +13,10 @@ async def healthz() -> dict[str, str]:
 @router.get("/readyz")
 async def readyz(request: Request) -> JSONResponse:
     """Readiness: can it take traffic right now?"""
-    ready = bool(getattr(request.app.state, "ready", False))
-    return JSONResponse(
-        {"status": "ready" if ready else "starting"},
-        status_code=200 if ready else 503,
-    )
+    state = request.app.state
+    if getattr(state, "ready", False):
+        return JSONResponse({"status": "ready"})
+    error = getattr(state, "startup_error", None)
+    if error:
+        return JSONResponse({"status": "failed", "detail": error}, status_code=503)
+    return JSONResponse({"status": "starting"}, status_code=503)

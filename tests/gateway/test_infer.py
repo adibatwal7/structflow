@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from structflow.config import Settings
+from structflow.engines.base import EngineOutput
 from structflow.engines.fake import (
     FakeClassifier,
     FakeGenerator,
@@ -15,7 +16,7 @@ from structflow.gateway.problems import StructFlowError
 from structflow.routing.router import Router
 from structflow.schemas.errors import ErrorCode
 from structflow.schemas.requests import GenerateRequest
-from structflow.schemas.responses import GenerateResult, Usage
+from structflow.schemas.responses import GenerateResult
 
 USER = [{"role": "user", "content": "Extract the invoice"}]
 
@@ -62,7 +63,7 @@ def test_engine_failure_becomes_problem_response() -> None:
     class Overloaded(FakeGenerator):
         async def generate(
             self, request: GenerateRequest
-        ) -> tuple[GenerateResult, Usage]:
+        ) -> EngineOutput[GenerateResult]:
             raise StructFlowError(
                 ErrorCode.BACKEND_SATURATED, "busy", headers={"Retry-After": "2"}
             )

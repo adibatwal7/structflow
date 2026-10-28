@@ -52,6 +52,25 @@ class Settings(BaseSettings):
         le=100,
         description="Maximum wait time in ms before dispatching microbatch: at least 0 (ge=0), at most 100 (le=100)",
     )
+    microbatch_max_queue: int = Field(
+        default=256,
+        gt=0,
+        description="Requests allowed to wait for the batcher before new ones get a 503",
+    )
+
+    # Softmax head (Step 2.4)
+    classifier_backend: Literal["fake", "hf"] = Field(
+        default="fake",
+        description="'fake' needs no model (tests, demos); 'hf' loads a real Hugging Face model",
+    )
+    classifier_model: str = Field(
+        default="distilbert/distilbert-base-uncased-finetuned-sst-2-english",
+        description="Hugging Face model id (or local folder) for the softmax head",
+    )
+    classifier_device: Literal["auto", "cpu", "cuda", "mps"] = "auto"
+    classifier_max_length: int = Field(
+        default=512, gt=0, description="Longer texts are truncated to this many tokens"
+    )
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
     @field_validator("vllm_base_url")

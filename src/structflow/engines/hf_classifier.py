@@ -15,7 +15,7 @@ from transformers import (
     PreTrainedTokenizerBase,
 )
 
-from structflow.engines.base import UnsupportedRequestError
+from structflow.engines.base import EngineOutput, UnsupportedRequestError
 from structflow.engines.batcher import MicroBatcher
 from structflow.engines.scoring import rank_labels
 from structflow.schemas.requests import ClassifyRequest
@@ -82,7 +82,11 @@ class HFClassifier:
     ) -> Self:
         """Download (or read from cache) and load the model. Slow and blocking."""
         tokenizer = AutoTokenizer.from_pretrained(model_id)
+        if tokenizer is None:
+            raise ValueError(f"{model_id} has no tokenizer")
         model = AutoModelForSequenceClassification.from_pretrained(model_id)
+        if model is None:
+            raise ValueError(f"{model_id} has no model")
         config = model.config
         if config.problem_type == "multi_label_classification":
             raise ValueError(f"{model_id} is a multi-label model; not supported yet")
@@ -121,7 +125,7 @@ class HFClassifier:
     def supports(self, request: ClassifyRequest) -> bool:
         return not request.multi_label and set(request.labels) <= self._known
 
-    async def classify(self, request: ClassifyRequest) -> tuple[ClassifyResult, Usage]:
+    async def classify(self, request: ClassifyRequest) -> EngineOutput[ClassifyResult]:
         if not self.supports(request):
             raise UnsupportedRequestError(
                 f"{self.name} only knows the labels {list(self.labels)} "
@@ -133,7 +137,11 @@ class HFClassifier:
             {label: by_label[label] for label in request.labels}, top_k=request.top_k
         )
         usage = Usage(prompt_tokens=batched.value.tokens, forward_passes=1)
-        return ClassifyResult(task="classify", labels=scores), usage
+        return EngineOutput(
+            result=ClassifyResult(task="classify", labels=scores),
+            usage=usage,
+            queue_ms=batched.queue_ms,
+        )
 
     def _predict(self, texts: Sequence[str]) -> list[Prediction]:
         """Runs on the batcher's worker thread: one forward pass for the batch."""

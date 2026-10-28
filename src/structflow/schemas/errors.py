@@ -16,6 +16,8 @@ class ErrorCode(StrEnum):
     INTERNAL_ERROR = "internal_error"
     NOT_FOUND = "not_found"
     METHOD_NOT_ALLOWED = "method_not_allowed"
+    NOT_READY = "not_ready"
+    UNSUPPORTED_REQUEST = "unsupported_request"
 
 
 ERROR_CATALOG: Final[dict[ErrorCode, tuple[int, str]]] = {
@@ -27,6 +29,8 @@ ERROR_CATALOG: Final[dict[ErrorCode, tuple[int, str]]] = {
     ErrorCode.INTERNAL_ERROR: (500, "Internal server error"),
     ErrorCode.NOT_FOUND: (404, "Resource not found"),
     ErrorCode.METHOD_NOT_ALLOWED: (405, "Method not allowed"),
+    ErrorCode.NOT_READY: (503, "Inference backend is not ready yet"),
+    ErrorCode.UNSUPPORTED_REQUEST: (422, "No available engine can serve this request"),
 }
 
 PROBLEM_JSON: Final = "application/problem+json"
