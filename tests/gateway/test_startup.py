@@ -6,7 +6,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from structflow.config import Settings
-from structflow.engines.base import Classifier, EngineOutput, UnsupportedRequestError
+from structflow.engines.base import (
+    Classifier,
+    EngineOutput,
+    GenerationBackend,
+    UnsupportedRequestError,
+)
 from structflow.engines.batcher import BatcherFullError
 from structflow.engines.fake import FakeClassifier, FakeGenerator, FakeSpanExtractor
 from structflow.gateway.app import create_app
@@ -32,11 +37,20 @@ class StubClassifier(FakeClassifier):
         return EngineOutput(out.result, out.usage, queue_ms=self.queue_ms)
 
 
-def client_for(classifier: Classifier) -> TestClient:
+class RefusingGenerator(FakeGenerator):
+    async def score_labels(
+        self, request: ClassifyRequest
+    ) -> EngineOutput[ClassifyResult]:
+        raise UnsupportedRequestError("no LLM is configured")
+
+
+def client_for(
+    classifier: Classifier, generator: GenerationBackend | None = None
+) -> TestClient:
     router = Router(
         classifier=classifier,
         span_extractor=FakeSpanExtractor(),
-        generator=FakeGenerator(),
+        generator=generator or FakeGenerator(),
     )
     app = create_app(Settings(_env_file=None), router=router)
     return TestClient(app, raise_server_exceptions=False)
@@ -79,13 +93,13 @@ def test_a_full_queue_is_503_with_retry_after() -> None:
     assert r.headers["retry-after"] == "1"
 
 
-def test_labels_the_model_does_not_know_are_422() -> None:
+def test_no_route_left_is_422_with_the_routes_tried() -> None:
     error = UnsupportedRequestError("only knows POSITIVE, NEGATIVE")
-    with client_for(StubClassifier(error=error)) as client:
+    with client_for(StubClassifier(error=error), RefusingGenerator()) as client:
         r = client.post("/v1/infer", json=CLASSIFY)
     assert r.status_code == 422
     assert r.json()["code"] == "unsupported_request"
-    assert r.json()["detail"] == "only knows POSITIVE, NEGATIVE"
+    assert "softmax_head, llm_label_scoring" in r.json()["detail"]
 
 
 def test_queue_time_is_reported_separately() -> None:

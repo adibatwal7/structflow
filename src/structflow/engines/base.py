@@ -52,6 +52,14 @@ class GenerationBackend(Protocol):
         self, request: GenerateRequest
     ) -> EngineOutput[GenerateResult]: ...
 
+    async def score_labels(
+        self, request: ClassifyRequest
+    ) -> EngineOutput[ClassifyResult]: ...
+
+    async def extract_spans(
+        self, request: ExtractSpansRequest
+    ) -> EngineOutput[ExtractSpansResult]: ...
+
 
 class UnsupportedRequestError(RuntimeError):
     """This engine cannot serve this request (for example, labels it never learned)."""

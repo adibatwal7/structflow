@@ -190,5 +190,8 @@ def test_the_app_serves_the_real_head(tiny_model_dir: Path) -> None:
                 "labels": ["positive", "sarcastic"],
             },
         )
-        assert unknown.status_code == 422
-        assert unknown.json()["code"] == "unsupported_request"
+        assert unknown.status_code == 200  # the tiny model never learned "sarcastic",
+        assert (
+            unknown.json()["route"] == "llm_label_scoring"
+        )  # so the LLM route answers
+        assert unknown.json()["route_trail"] == ["softmax_head", "llm_label_scoring"]

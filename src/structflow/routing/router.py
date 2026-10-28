@@ -1,4 +1,6 @@
 import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import assert_never
 
 from structflow.engines.base import (
@@ -6,7 +8,9 @@ from structflow.engines.base import (
     EngineOutput,
     GenerationBackend,
     SpanExtractor,
+    UnsupportedRequestError,
 )
+from structflow.routing.grounding import ground
 from structflow.schemas.common import Route
 from structflow.schemas.requests import (
     ClassifyRequest,
@@ -15,7 +19,21 @@ from structflow.schemas.requests import (
     InferenceRequest,
     StructuredRequest,
 )
-from structflow.schemas.responses import InferenceResponse, Result, Timings
+from structflow.schemas.responses import (
+    ExtractSpansResult,
+    InferenceResponse,
+    Result,
+    Timings,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class Attempt:
+    """One way to serve a request: which route, which model, and how to call it."""
+
+    route: Route
+    model: str
+    run: Callable[[], Awaitable[EngineOutput[Result]]]
 
 
 class Router:
@@ -30,42 +48,91 @@ class Router:
         self._span_extractor = span_extractor
         self._generator = generator
 
+    def plan(self, request: InferenceRequest) -> list[Attempt]:
+        """Every route that could serve this request, cheapest first."""
+        match request:
+            case ClassifyRequest() as classify:
+                return [
+                    Attempt(
+                        Route.SOFTMAX_HEAD,
+                        self._classifier.name,
+                        lambda: self._classifier.classify(classify),
+                    ),
+                    Attempt(
+                        Route.LLM_LABEL_SCORING,
+                        self._generator.name,
+                        lambda: self._generator.score_labels(classify),
+                    ),
+                ]
+            case ExtractSpansRequest() as extract:
+                return [
+                    Attempt(
+                        Route.SPAN_HEAD,
+                        self._span_extractor.name,
+                        lambda: self._span_extractor.extract(extract),
+                    ),
+                    Attempt(
+                        Route.CONSTRAINED_GENERATION,
+                        self._generator.name,
+                        lambda: self._grounded_spans(extract),
+                    ),
+                ]
+            case StructuredRequest() as structured:
+                return [
+                    Attempt(
+                        Route.CONSTRAINED_GENERATION,
+                        self._generator.name,
+                        lambda: self._generator.generate_structured(structured),
+                    ),
+                ]
+            case GenerateRequest() as generate:
+                return [
+                    Attempt(
+                        Route.UNCONSTRAINED_GENERATION,
+                        self._generator.name,
+                        lambda: self._generator.generate(generate),
+                    ),
+                ]
+            case _:
+                assert_never(request)
+
     async def handle(
         self, request: InferenceRequest, *, request_id: str
     ) -> InferenceResponse:
         started = time.perf_counter()
-        output: EngineOutput[Result]
-        match request:
-            case ClassifyRequest():
-                route, model = Route.SOFTMAX_HEAD, self._classifier.name
-                output = await self._classifier.classify(request)
-            case ExtractSpansRequest():
-                route, model = Route.SPAN_HEAD, self._span_extractor.name
-                output = await self._span_extractor.extract(request)
-            case StructuredRequest():
-                route, model = Route.CONSTRAINED_GENERATION, self._generator.name
-                output = await self._generator.generate_structured(request)
-            case GenerateRequest():
-                route, model = Route.UNCONSTRAINED_GENERATION, self._generator.name
-                output = await self._generator.generate(request)
-            case _:
-                assert_never(request)
-        total_ms = (time.perf_counter() - started) * 1000
-        inference_ms = max(0.0, total_ms - output.queue_ms)
-        timings = Timings(
-            queue_ms=output.queue_ms,
-            inference_ms=inference_ms,
-            total_ms=total_ms,
-        )
-        return InferenceResponse(
-            route=route,
-            model=model,
-            route_trail=(route,),
-            result=output.result,
-            timings=timings,
-            usage=output.usage,
-            request_id=request_id,
+        trail: list[Route] = []
+        for attempt in self.plan(request):
+            trail.append(attempt.route)
+            try:
+                output = await attempt.run()
+            except UnsupportedRequestError:
+                continue  # this route can't serve it: try the next one
+            total_ms = (time.perf_counter() - started) * 1000
+            return InferenceResponse(
+                request_id=request_id,
+                model=attempt.model,
+                route=attempt.route,
+                route_trail=tuple(trail),
+                result=output.result,
+                usage=output.usage,
+                timings=Timings(
+                    queue_ms=output.queue_ms,
+                    inference_ms=max(total_ms - output.queue_ms, 0.0),
+                    total_ms=total_ms,
+                ),
+            )
+        tried = ", ".join(trail)
+        raise UnsupportedRequestError(
+            f"no route can serve this request (tried {tried})"
         )
 
-    # match with class patterns picks a branch by the request’s type, and inside each branch mypy knows exactly which request class it has
-    # assert_never is an exhaustiveness check. If someone adds a fifth task to InferenceRequest and forgets the router, mypy fails the build here. The compiler reminds you, instead of a customer finding out
+    async def _grounded_spans(
+        self, request: ExtractSpansRequest
+    ) -> EngineOutput[ExtractSpansResult]:
+        output = await self._generator.extract_spans(request)
+        spans = ground(request.text, output.result.spans)
+        return EngineOutput(
+            result=ExtractSpansResult(task="extract_spans", spans=spans),
+            usage=output.usage,
+            queue_ms=output.queue_ms,
+        )

@@ -2,7 +2,7 @@ import json
 import re
 from typing import Any
 
-from structflow.engines.base import EngineOutput
+from structflow.engines.base import EngineOutput, UnsupportedRequestError
 from structflow.schemas.requests import (
     ClassifyRequest,
     ExtractSpansRequest,
@@ -43,9 +43,14 @@ class FakeClassifier:
 class FakeSpanExtractor:
     name = "fake-span-extractor"
 
+    def supports(self, request: ExtractSpansRequest) -> bool:
+        return not request.entity_types or set(request.entity_types) == {"ENT"}
+
     async def extract(
         self, request: ExtractSpansRequest
     ) -> EngineOutput[ExtractSpansResult]:
+        if not self.supports(request):
+            raise UnsupportedRequestError(f"{self.name} only finds ENT")
         text = request.text
         spans = []
         for m in re.finditer(r"\b[A-Z][a-z]+\b", text):
@@ -97,4 +102,28 @@ class FakeGenerator:
         return EngineOutput(
             result=GenerateResult(task="generate", text=text, finish_reason="stop"),
             usage=usage,
+        )
+
+    async def score_labels(
+        self, request: ClassifyRequest
+    ) -> EngineOutput[ClassifyResult]:
+        """Pretend LLM label scoring: same idea as the fake classifier."""
+        return await FakeClassifier().classify(request)
+
+    async def extract_spans(
+        self, request: ExtractSpansRequest
+    ) -> EngineOutput[ExtractSpansResult]:
+        """Pretend LLM extraction: capitalised words, labelled with the first type asked for."""
+        label = request.entity_types[0] if request.entity_types else "ENT"
+        spans = tuple(
+            Span(start=m.start(), end=m.end(), label=label, text=m.group(), score=0.8)
+            for m in re.finditer(r"\b[A-Z][a-z]+\b", request.text)
+        )
+        usage = Usage(
+            prompt_tokens=len(request.text.split()),
+            completion_tokens=4 * len(spans),
+            forward_passes=1 + 4 * len(spans),
+        )
+        return EngineOutput(
+            result=ExtractSpansResult(task="extract_spans", spans=spans), usage=usage
         )
