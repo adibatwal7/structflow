@@ -84,6 +84,13 @@ class Settings(BaseSettings):
     span_max_length: int = Field(
         default=512, gt=0, description="Longer texts are refused, never cut"
     )
+
+    fake_generation_delay_ms: int = Field(
+        default=0,
+        ge=0,
+        description="Make the fake LLM this slow, to see limits and timeouts locally",
+    )
+
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
     @field_validator("vllm_base_url")

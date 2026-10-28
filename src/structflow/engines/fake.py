@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 from typing import Any
@@ -73,12 +74,20 @@ class FakeSpanExtractor:
 class FakeGenerator:
     name = "fake-generator"
 
-    def __init__(self, structured_output: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self, structured_output: dict[str, Any] | None = None, *, delay_s: float = 0.0
+    ) -> None:
         self._structured_output = structured_output or {}
+        self._delay_s = delay_s  # pretend to be a slow LLM
+
+    async def _think(self) -> None:
+        if self._delay_s > 0:
+            await asyncio.sleep(self._delay_s)
 
     async def generate_structured(
         self, request: StructuredRequest
     ) -> EngineOutput[StructuredResult]:
+        await self._think()
         raw_text = json.dumps(self._structured_output)
         prompt_tokens = sum(len(m.content.split()) for m in request.messages)
         usage = Usage(
@@ -92,6 +101,7 @@ class FakeGenerator:
         return EngineOutput(result=result, usage=usage)
 
     async def generate(self, request: GenerateRequest) -> EngineOutput[GenerateResult]:
+        await self._think()
         text = f"(fake) you said: {request.messages[-1].content}"
         prompt_tokens = sum(len(m.content.split()) for m in request.messages)
         usage = Usage(
@@ -108,11 +118,13 @@ class FakeGenerator:
         self, request: ClassifyRequest
     ) -> EngineOutput[ClassifyResult]:
         """Pretend LLM label scoring: same idea as the fake classifier."""
+        await self._think()
         return await FakeClassifier().classify(request)
 
     async def extract_spans(
         self, request: ExtractSpansRequest
     ) -> EngineOutput[ExtractSpansResult]:
+        await self._think()
         """Pretend LLM extraction: capitalised words, labelled with the first type asked for."""
         label = request.entity_types[0] if request.entity_types else "ENT"
         spans = tuple(

@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from structflow.config import Settings, get_settings
 from structflow.engines.base import Classifier, SpanExtractor
 from structflow.engines.fake import FakeClassifier, FakeGenerator, FakeSpanExtractor
+from structflow.engines.limits import LimitedGenerator
 from structflow.routing.router import Router
 
 from .health import router as health_router
@@ -65,10 +66,16 @@ async def _build_router(settings: Settings, stack: AsyncExitStack) -> Router:
     if settings.span_backend == "hf":
         loaded_spans = await asyncio.to_thread(_load_hf_span_extractor, settings)
         span_extractor = await stack.enter_async_context(loaded_spans)
+
+    generator = LimitedGenerator(
+        FakeGenerator(delay_s=settings.fake_generation_delay_ms / 1000),
+        max_inflight=settings.max_inflight_generation,
+        timeout_s=settings.request_timeout_s,
+    )
     return Router(
         classifier=classifier,
         span_extractor=span_extractor,
-        generator=FakeGenerator(),
+        generator=generator,
     )
 
 

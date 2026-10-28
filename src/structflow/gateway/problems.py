@@ -8,6 +8,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from structflow.engines.base import UnsupportedRequestError
 from structflow.engines.batcher import BatcherClosedError, BatcherFullError
+from structflow.engines.limits import GenerationBusyError, GenerationTimeoutError
 from structflow.schemas.errors import (
     PROBLEM_JSON,
     ErrorCode,
@@ -15,6 +16,7 @@ from structflow.schemas.errors import (
     ProblemDetails,
 )
 
+from .disconnect import ClientDisconnectedError
 from .request_id import HEADER
 
 logger = logging.getLogger("structflow.gateway")
@@ -24,6 +26,9 @@ _ENGINE_ERRORS: dict[type[Exception], tuple[ErrorCode, dict[str, str]]] = {
     BatcherFullError: (ErrorCode.BACKEND_SATURATED, {"Retry-After": "1"}),
     BatcherClosedError: (ErrorCode.NOT_READY, {"Retry-After": "5"}),
     UnsupportedRequestError: (ErrorCode.UNSUPPORTED_REQUEST, {}),
+    GenerationBusyError: (ErrorCode.BACKEND_SATURATED, {"Retry-After": "1"}),
+    GenerationTimeoutError: (ErrorCode.UPSTREAM_TIMEOUT, {}),
+    ClientDisconnectedError: (ErrorCode.CLIENT_DISCONNECTED, {}),
 }
 
 

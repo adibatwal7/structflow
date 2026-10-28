@@ -18,6 +18,7 @@ class ErrorCode(StrEnum):
     METHOD_NOT_ALLOWED = "method_not_allowed"
     NOT_READY = "not_ready"
     UNSUPPORTED_REQUEST = "unsupported_request"
+    CLIENT_DISCONNECTED = "client_disconnected"
 
 
 ERROR_CATALOG: Final[dict[ErrorCode, tuple[int, str]]] = {
@@ -31,6 +32,7 @@ ERROR_CATALOG: Final[dict[ErrorCode, tuple[int, str]]] = {
     ErrorCode.METHOD_NOT_ALLOWED: (405, "Method not allowed"),
     ErrorCode.NOT_READY: (503, "Inference backend is not ready yet"),
     ErrorCode.UNSUPPORTED_REQUEST: (422, "No available engine can serve this request"),
+    ErrorCode.CLIENT_DISCONNECTED: (499, "Client closed the request"),
 }
 
 PROBLEM_JSON: Final = "application/problem+json"

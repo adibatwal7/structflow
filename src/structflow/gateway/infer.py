@@ -7,6 +7,7 @@ from structflow.schemas.errors import ErrorCode, ProblemDetails
 from structflow.schemas.requests import InferenceRequest
 from structflow.schemas.responses import InferenceResponse
 
+from .disconnect import unless_disconnected
 from .problems import StructFlowError
 
 router = APIRouter(tags=["inference"])
@@ -43,4 +44,5 @@ async def infer(
 ) -> InferenceResponse:
     if body.request_id is not None:  # a request_id in the body takes precedence
         request.state.request_id = body.request_id
-    return await engine_router.handle(body, request_id=request.state.request_id)
+    work = engine_router.handle(body, request_id=request.state.request_id)
+    return await unless_disconnected(request, work)

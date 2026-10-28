@@ -11,7 +11,8 @@
         "not_found",
         "method_not_allowed",
         "not_ready",
-        "unsupported_request"
+        "unsupported_request",
+        "client_disconnected"
       ],
       "title": "ErrorCode",
       "type": "string"
