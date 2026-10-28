@@ -41,3 +41,7 @@ class GenerationBackend(Protocol):
     async def generate(
         self, request: GenerateRequest
     ) -> tuple[GenerateResult, Usage]: ...
+
+
+class UnsupportedRequestError(RuntimeError):
+    """This engine cannot serve this request (for example, labels it never learned)."""

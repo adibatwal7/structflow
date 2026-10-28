@@ -16,6 +16,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff", "mypy", "jsonschema>=4.23", "httpx2", "pytest-timeout>=2.3"]
+ml = ["torch>=2.9", "transformers>=5.0"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/structflow"]
 
