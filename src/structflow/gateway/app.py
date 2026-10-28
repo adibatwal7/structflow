@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from fastapi import FastAPI
 
 from structflow.config import Settings, get_settings
-from structflow.engines.base import Classifier
+from structflow.engines.base import Classifier, SpanExtractor
 from structflow.engines.fake import FakeClassifier, FakeGenerator, FakeSpanExtractor
 from structflow.routing.router import Router
 
@@ -18,16 +18,9 @@ from .request_id import RequestIdMiddleware
 
 if TYPE_CHECKING:  # only for type checkers: importing torch at startup is slow
     from structflow.engines.hf_classifier import HFClassifier
+    from structflow.engines.hf_spans import HFSpanExtractor
 
 logger = logging.getLogger("structflow.gateway")
-
-
-def _router_with(classifier: Classifier) -> Router:
-    return Router(
-        classifier=classifier,
-        span_extractor=FakeSpanExtractor(),
-        generator=FakeGenerator(),
-    )
 
 
 def _load_hf_classifier(settings: Settings) -> "HFClassifier":
@@ -44,20 +37,53 @@ def _load_hf_classifier(settings: Settings) -> "HFClassifier":
     )
 
 
+def _load_hf_span_extractor(settings: Settings) -> "HFSpanExtractor":
+    """Slow and blocking, like the classifier, so it also runs in a thread."""
+    from structflow.engines.hf_spans import HFSpanExtractor
+
+    return HFSpanExtractor.load(
+        settings.span_model,
+        device=settings.span_device,
+        max_length=settings.span_max_length,
+        max_batch_size=settings.microbatch_max_size,
+        max_wait_ms=settings.microbatch_max_wait_ms,
+        max_queue_size=settings.microbatch_max_queue,
+    )
+
+
+def _uses_real_models(settings: Settings) -> bool:
+    return settings.classifier_backend == "hf" or settings.span_backend == "hf"
+
+
+async def _build_router(settings: Settings, stack: AsyncExitStack) -> Router:
+    """Real models load in a worker thread, then join the exit stack to stop cleanly."""
+    classifier: Classifier = FakeClassifier()
+    span_extractor: SpanExtractor = FakeSpanExtractor()
+    if settings.classifier_backend == "hf":
+        loaded = await asyncio.to_thread(_load_hf_classifier, settings)
+        classifier = await stack.enter_async_context(loaded)
+    if settings.span_backend == "hf":
+        loaded_spans = await asyncio.to_thread(_load_hf_span_extractor, settings)
+        span_extractor = await stack.enter_async_context(loaded_spans)
+    return Router(
+        classifier=classifier,
+        span_extractor=span_extractor,
+        generator=FakeGenerator(),
+    )
+
+
 async def _load_in_background(
     app: FastAPI, settings: Settings, stack: AsyncExitStack
 ) -> None:
     """The server answers /healthz while this runs."""
     try:
-        classifier = await asyncio.to_thread(_load_hf_classifier, settings)
-        await stack.enter_async_context(classifier)
+        app.state.router = await _build_router(settings, stack)
     except Exception:
-        logger.exception("could not load %s", settings.classifier_model)
-        app.state.startup_error = f"could not load {settings.classifier_model}"
+        logger.exception("could not load the models")
+        app.state.startup_error = "could not load the models (see the server log)"
         return
-    app.state.router = _router_with(classifier)
     app.state.ready = True
-    logger.info("%s is ready on %s", classifier.name, classifier.device)
+    logger.info("models are ready")
 
 
 def create_app(
@@ -68,8 +94,11 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         async with AsyncExitStack() as stack:
-            if router is not None or resolved.classifier_backend == "fake":
-                app.state.router = router or _router_with(FakeClassifier())
+            if router is not None:
+                app.state.router = router
+                app.state.ready = True
+            elif not _uses_real_models(resolved):
+                app.state.router = await _build_router(resolved, stack)
                 app.state.ready = True
             else:
                 loading = asyncio.create_task(_load_in_background(app, resolved, stack))

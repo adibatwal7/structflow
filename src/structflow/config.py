@@ -71,6 +71,19 @@ class Settings(BaseSettings):
     classifier_max_length: int = Field(
         default=512, gt=0, description="Longer texts are truncated to this many tokens"
     )
+
+    span_backend: Literal["fake", "hf"] = Field(
+        default="fake",
+        description="'fake' needs no model (tests, demos); 'hf' loads a real NER model",
+    )
+    span_model: str = Field(
+        default="dslim/distilbert-NER",
+        description="Hugging Face token-classification model id (or local folder)",
+    )
+    span_device: Literal["auto", "cpu", "cuda", "mps"] = "auto"
+    span_max_length: int = Field(
+        default=512, gt=0, description="Longer texts are refused, never cut"
+    )
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
     @field_validator("vllm_base_url")
