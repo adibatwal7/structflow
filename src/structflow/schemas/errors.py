@@ -19,6 +19,8 @@ class ErrorCode(StrEnum):
     NOT_READY = "not_ready"
     UNSUPPORTED_REQUEST = "unsupported_request"
     CLIENT_DISCONNECTED = "client_disconnected"
+    OUTPUT_INVALID = "output_invalid"
+    UPSTREAM_ERROR = "upstream_error"
 
 
 ERROR_CATALOG: Final[dict[ErrorCode, tuple[int, str]]] = {
@@ -33,6 +35,8 @@ ERROR_CATALOG: Final[dict[ErrorCode, tuple[int, str]]] = {
     ErrorCode.NOT_READY: (503, "Inference backend is not ready yet"),
     ErrorCode.UNSUPPORTED_REQUEST: (422, "No available engine can serve this request"),
     ErrorCode.CLIENT_DISCONNECTED: (499, "Client closed the request"),
+    ErrorCode.OUTPUT_INVALID: (502, "Model output broke its constraint"),
+    ErrorCode.UPSTREAM_ERROR: (502, "Inference backend failed"),
 }
 
 PROBLEM_JSON: Final = "application/problem+json"

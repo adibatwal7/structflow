@@ -10,12 +10,13 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.29",
     "pydantic>=2.7",
-    "pydantic-settings>=2.3"
+    "pydantic-settings>=2.3",
+    "httpx2>=2.13",
+    "jsonschema>=4.23",
 ]
 
-
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff", "mypy", "jsonschema>=4.23", "httpx2", "pytest-timeout>=2.3"]
+dev = ["pytest>=8", "ruff", "mypy", "pytest-timeout>=2.3", "types-jsonschema"]
 ml = ["torch>=2.9", "transformers>=5.0"]
 
 [tool.hatch.build.targets.wheel]

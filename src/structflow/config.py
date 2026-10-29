@@ -85,6 +85,11 @@ class Settings(BaseSettings):
         default=512, gt=0, description="Longer texts are refused, never cut"
     )
 
+    generator_backend: Literal["fake", "vllm"] = Field(
+        default="fake",
+        description="'fake' needs no GPU; 'vllm' calls vLLM's OpenAI-compatible server",
+    )
+
     fake_generation_delay_ms: int = Field(
         default=0,
         ge=0,

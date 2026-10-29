@@ -67,7 +67,7 @@ class ExtractSpansResult(StrictModel):
 
 class StructuredResult(StrictModel):
     task: Literal["structured"]
-    output: dict[str, Any]
+    output: dict[str, Any] | str
     raw_text: str
     # No finish_reason - truncated output is an error, not a result
 

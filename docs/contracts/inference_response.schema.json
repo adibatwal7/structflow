@@ -162,9 +162,16 @@
           "type": "string"
         },
         "output": {
-          "additionalProperties": true,
-          "title": "Output",
-          "type": "object"
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Output"
         },
         "raw_text": {
           "title": "Raw Text",

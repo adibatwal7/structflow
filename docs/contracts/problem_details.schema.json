@@ -12,7 +12,9 @@
         "method_not_allowed",
         "not_ready",
         "unsupported_request",
-        "client_disconnected"
+        "client_disconnected",
+        "output_invalid",
+        "upstream_error"
       ],
       "title": "ErrorCode",
       "type": "string"
