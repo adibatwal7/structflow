@@ -8,11 +8,11 @@ import httpx2
 import pytest
 from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator
-from structflow.engines.vllm import VLLMBackend
 
 from structflow.config import Settings
 from structflow.engines.fake import FakeClassifier, FakeSpanExtractor
 from structflow.engines.limits import LimitedGenerator
+from structflow.engines.vllm import VLLMBackend
 from structflow.gateway.app import create_app
 from structflow.routing.router import Router
 
@@ -70,10 +70,15 @@ def test_a_good_answer_is_a_contract_valid_response() -> None:
     [
         (200, reply("2026-10-", "length"), 422, "output_truncated"),
         (200, reply("tomorrow"), 502, "output_invalid"),
-        (400, {"error": {"message": "prompt is too long"}}, 422, "unsupported_request"),
+        (
+            400,
+            {"error": {"message": "unsupported regex"}},
+            422,
+            "constraint_compile_failed",
+        ),
         (500, {"message": "CUDA out of memory"}, 502, "upstream_error"),
     ],
-    ids=["truncated", "broke-the-pattern", "rejected", "crashed"],
+    ids=["truncated", "broke-the-pattern", "constraint-rejected", "crashed"],
 )
 def test_every_vllm_failure_is_a_clear_problem(
     status: int, payload: Any, expected_status: int, code: str
@@ -96,3 +101,36 @@ def test_the_app_can_be_pointed_at_vllm() -> None:
     assert r.status_code == 502
     assert r.json()["code"] == "upstream_error"
     assert r.headers["retry-after"] == "5"
+
+
+def test_a_degraded_answer_is_contract_valid_and_marked() -> None:
+    body = {**DATE, "allow_unconstrained_fallback": True}
+    calls: list[bool] = []
+
+    def answer(request: httpx2.Request) -> httpx2.Response:
+        sent = json.loads(request.content)
+        calls.append("structured_outputs" in sent)
+        if "structured_outputs" in sent:
+            return httpx2.Response(400, json={"error": {"message": "no regex support"}})
+        return httpx2.Response(200, json=reply("2026-10-29"))
+
+    vllm = VLLMBackend(
+        base_url="http://vllm.test/v1",
+        model="llama",
+        transport=httpx2.MockTransport(answer),
+    )
+    router = Router(
+        classifier=FakeClassifier(),
+        span_extractor=FakeSpanExtractor(),
+        generator=LimitedGenerator(vllm, max_inflight=4, timeout_s=5),
+    )
+    with TestClient(create_app(Settings(_env_file=None), router=router)) as client:
+        r = client.post("/v1/infer", json=body)
+    assert r.status_code == 200, r.text
+    RESPONSE.validate(r.json())
+    assert r.json()["degraded"] is True
+    assert r.json()["route_trail"] == [
+        "constrained_generation",
+        "unconstrained_generation",
+    ]
+    assert calls == [True, False]

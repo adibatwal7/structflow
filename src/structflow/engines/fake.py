@@ -85,7 +85,7 @@ class FakeGenerator:
             await asyncio.sleep(self._delay_s)
 
     async def generate_structured(
-        self, request: StructuredRequest
+        self, request: StructuredRequest, *, constrained: bool = True
     ) -> EngineOutput[StructuredResult]:
         await self._think()
         raw_text = json.dumps(self._structured_output)

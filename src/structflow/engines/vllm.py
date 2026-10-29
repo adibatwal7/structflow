@@ -18,7 +18,12 @@ from jsonschema import Draft202012Validator
 from pydantic import BaseModel, ValidationError
 
 from structflow.config import Settings
-from structflow.engines.base import EngineOutput, UnsupportedRequestError
+from structflow.engines.base import (
+    ConstraintRejectedError,
+    EngineOutput,
+    OutputInvalidError,
+    UnsupportedRequestError,
+)
 from structflow.engines.limits import GenerationTimeoutError
 from structflow.schemas.common import ChatMessage, SamplingParams
 from structflow.schemas.constraints import (
@@ -57,10 +62,6 @@ class UpstreamRejectedError(Exception):
 
 class OutputTruncatedError(Exception):
     """The answer hit max_tokens before it was finished."""
-
-
-class OutputInvalidError(Exception):
-    """The answer broke its constraint. It must never reach the client."""
 
 
 # --- What vLLM sends back. We only declare the fields we use. ---------------------
@@ -231,13 +232,22 @@ class VLLMBackend:
         return EngineOutput(result=result, usage=usage)
 
     async def generate_structured(
-        self, request: StructuredRequest
+        self, request: StructuredRequest, *, constrained: bool = True
     ) -> EngineOutput[StructuredResult]:
+        """With constrained=False there is no mask: only the hint, and our check after."""
         constraint = request.constraint
         messages = with_hint(request.messages, format_hint(constraint))
         body = self._body(messages, request.sampling)
-        body["structured_outputs"] = structured_outputs(constraint)
-        reply, usage = await self._chat(body)
+        if constrained:
+            body["structured_outputs"] = structured_outputs(constraint)
+        try:
+            reply, usage = await self._chat(body)
+        except UpstreamRejectedError as exc:
+            if not constrained:
+                raise
+            raise ConstraintRejectedError(
+                f"vLLM refused the constraint: {exc}"
+            ) from None
         if reply.finish_reason == "length":
             raise OutputTruncatedError(
                 f"the answer hit max_tokens ({request.sampling.max_tokens}) before it was complete"

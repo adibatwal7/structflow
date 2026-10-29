@@ -6,11 +6,14 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from structflow.engines.base import UnsupportedRequestError
+from structflow.engines.base import (
+    ConstraintRejectedError,
+    OutputInvalidError,
+    UnsupportedRequestError,
+)
 from structflow.engines.batcher import BatcherClosedError, BatcherFullError
 from structflow.engines.limits import GenerationBusyError, GenerationTimeoutError
 from structflow.engines.vllm import (
-    OutputInvalidError,
     OutputTruncatedError,
     UpstreamError,
     UpstreamRejectedError,
@@ -39,6 +42,7 @@ _ENGINE_ERRORS: dict[type[Exception], tuple[ErrorCode, dict[str, str]]] = {
     OutputInvalidError: (ErrorCode.OUTPUT_INVALID, {}),
     UpstreamRejectedError: (ErrorCode.UNSUPPORTED_REQUEST, {}),
     UpstreamError: (ErrorCode.UPSTREAM_ERROR, {"Retry-After": "5"}),
+    ConstraintRejectedError: (ErrorCode.CONSTRAINT_COMPILE_FAILED, {}),
 }
 
 

@@ -61,9 +61,11 @@ class LimitedGenerator:
             self.in_flight -= 1
 
     async def generate_structured(
-        self, request: StructuredRequest
+        self, request: StructuredRequest, *, constrained: bool = True
     ) -> EngineOutput[StructuredResult]:
-        return await self._limited(lambda: self._inner.generate_structured(request))
+        return await self._limited(
+            lambda: self._inner.generate_structured(request, constrained=constrained)
+        )
 
     async def generate(self, request: GenerateRequest) -> EngineOutput[GenerateResult]:
         return await self._limited(lambda: self._inner.generate(request))

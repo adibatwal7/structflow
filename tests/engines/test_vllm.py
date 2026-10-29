@@ -9,15 +9,15 @@ from typing import Any
 
 import httpx2
 import pytest
+
+from structflow.engines.base import ConstraintRejectedError, OutputInvalidError
+from structflow.engines.limits import GenerationTimeoutError
 from structflow.engines.vllm import (
-    OutputInvalidError,
     OutputTruncatedError,
     UpstreamError,
     UpstreamRejectedError,
     VLLMBackend,
 )
-
-from structflow.engines.limits import GenerationTimeoutError
 from structflow.schemas.requests import GenerateRequest, StructuredRequest
 
 pytestmark = pytest.mark.anyio
@@ -250,3 +250,26 @@ async def test_a_slow_vllm_is_a_timeout() -> None:
 
     with pytest.raises(GenerationTimeoutError):
         await backend(slow).generate(generate())
+
+
+async def test_without_the_mask_only_the_hint_and_the_check_remain() -> None:
+    fake = FakeVLLM('{"vendor": "ACME"}')
+    constraint = {"type": "json_schema", "schema": VENDOR_SCHEMA}
+    out = await backend(fake).generate_structured(
+        structured(constraint), constrained=False
+    )
+    assert "structured_outputs" not in fake.sent[0]
+    assert "JSON Schema" in fake.sent[0]["messages"][0]["content"]
+    assert out.result.output == {"vendor": "ACME"}
+
+    with pytest.raises(OutputInvalidError):  # still checked, mask or not
+        await backend(FakeVLLM("sure! here you go")).generate_structured(
+            structured(constraint), constrained=False
+        )
+
+
+async def test_a_refused_constraint_is_a_constraint_error() -> None:
+    fake = FakeVLLM(status=400, error={"error": {"message": "unsupported regex"}})
+    constraint = {"type": "regex", "pattern": r"\d+"}
+    with pytest.raises(ConstraintRejectedError, match="unsupported regex"):
+        await backend(fake).generate_structured(structured(constraint))

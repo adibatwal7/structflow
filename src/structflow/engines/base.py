@@ -45,7 +45,7 @@ class GenerationBackend(Protocol):
     name: str
 
     async def generate_structured(
-        self, request: StructuredRequest
+        self, request: StructuredRequest, *, constrained: bool = True
     ) -> EngineOutput[StructuredResult]: ...
 
     async def generate(
@@ -63,3 +63,11 @@ class GenerationBackend(Protocol):
 
 class UnsupportedRequestError(RuntimeError):
     """This engine cannot serve this request (for example, labels it never learned)."""
+
+
+class ConstraintRejectedError(Exception):
+    """The backend refused the constraint (usually: it could not compile it)."""
+
+
+class OutputInvalidError(Exception):
+    """The answer broke its constraint. It must never reach the client."""

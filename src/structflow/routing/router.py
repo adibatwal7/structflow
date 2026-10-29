@@ -1,12 +1,14 @@
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import assert_never
 
 from structflow.engines.base import (
     Classifier,
+    ConstraintRejectedError,
     EngineOutput,
     GenerationBackend,
+    OutputInvalidError,
     SpanExtractor,
     UnsupportedRequestError,
 )
@@ -34,6 +36,7 @@ class Attempt:
     route: Route
     model: str
     run: Callable[[], Awaitable[EngineOutput[Result]]]
+    fall_back_on: tuple[type[Exception], ...] = (UnsupportedRequestError,)
 
 
 class Router:
@@ -78,11 +81,26 @@ class Router:
                     ),
                 ]
             case StructuredRequest() as structured:
+                constrained = Attempt(
+                    Route.CONSTRAINED_GENERATION,
+                    self._generator.name,
+                    lambda: self._generator.generate_structured(structured),
+                    fall_back_on=(),  # its errors go straight to the client
+                )
+                if not structured.allow_unconstrained_fallback:
+                    return [constrained]  # its errors go straight to the client
                 return [
+                    replace(
+                        constrained,
+                        fall_back_on=(ConstraintRejectedError, OutputInvalidError),
+                    ),
                     Attempt(
-                        Route.CONSTRAINED_GENERATION,
+                        Route.UNCONSTRAINED_GENERATION,
                         self._generator.name,
-                        lambda: self._generator.generate_structured(structured),
+                        lambda: self._generator.generate_structured(
+                            structured, constrained=False
+                        ),
+                        fall_back_on=(),
                     ),
                 ]
             case GenerateRequest() as generate:
@@ -105,14 +123,17 @@ class Router:
             trail.append(attempt.route)
             try:
                 output = await attempt.run()
-            except UnsupportedRequestError:
+            except attempt.fall_back_on:
                 continue  # this route can't serve it: try the next one
+
             total_ms = (time.perf_counter() - started) * 1000
             return InferenceResponse(
                 request_id=request_id,
                 model=attempt.model,
                 route=attempt.route,
                 route_trail=tuple(trail),
+                degraded=isinstance(request, StructuredRequest)
+                and attempt.route is Route.UNCONSTRAINED_GENERATION,
                 result=output.result,
                 usage=output.usage,
                 timings=Timings(
