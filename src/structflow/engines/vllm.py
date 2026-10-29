@@ -6,7 +6,9 @@ enforce every JSON Schema keyword, and a constraint is a promise to our client.
 """
 
 import json
+import math
 import re
+from collections.abc import Sequence
 from functools import lru_cache
 from types import TracebackType
 from typing import Any, Self, assert_never
@@ -36,9 +38,13 @@ from structflow.schemas.responses import (
     ClassifyResult,
     ExtractSpansResult,
     GenerateResult,
+    LabelScore,
+    Span,
     StructuredResult,
     Usage,
 )
+
+DEFAULT_ENTITY_TYPES = ("PER", "ORG", "LOC", "MISC")  # the same four as the span head
 
 
 class UpstreamError(Exception):
@@ -64,9 +70,18 @@ class _Message(BaseModel):
     content: str | None = None
 
 
+class _TokenLogprob(BaseModel):
+    logprob: float
+
+
+class _Logprobs(BaseModel):
+    content: list[_TokenLogprob] | None = None
+
+
 class _Choice(BaseModel):
     message: _Message
     finish_reason: str | None = None
+    logprobs: _Logprobs | None = None
 
 
 class _Usage(BaseModel):
@@ -235,12 +250,64 @@ class VLLMBackend:
     async def score_labels(
         self, request: ClassifyRequest
     ) -> EngineOutput[ClassifyResult]:
-        raise UnsupportedRequestError(f"{self.name}: label scoring comes in Step 3.2")
+        """The model picks one label (a choice constraint) and tells us how sure it was."""
+        if request.multi_label:
+            raise UnsupportedRequestError(f"{self.name} picks exactly one label")
+        constraint = ChoiceConstraint(type="choice", choices=request.labels)
+        hint = "Classify the user's text. " + format_hint(constraint)
+        body = self._body(
+            [
+                {"role": "system", "content": hint},
+                {"role": "user", "content": request.text},
+            ],
+            SamplingParams(temperature=0.0, max_tokens=64),
+        )
+        body["structured_outputs"] = structured_outputs(constraint)
+        body["logprobs"] = True
+        reply, usage = await self._chat(body)
+        label = parse_output(constraint, reply.message.content or "")
+        assert isinstance(label, str)
+        score = sequence_probability(_token_logprobs(reply))
+        result = ClassifyResult(
+            task="classify", labels=(LabelScore(label=label, score=score),)
+        )
+        return EngineOutput(result=result, usage=usage)
 
     async def extract_spans(
         self, request: ExtractSpansRequest
     ) -> EngineOutput[ExtractSpansResult]:
-        raise UnsupportedRequestError(f"{self.name}: span extraction comes in Step 3.2")
+        """The model lists entities as JSON; we find each one in the text ourselves."""
+        types = request.entity_types or DEFAULT_ENTITY_TYPES
+        constraint = JsonSchemaConstraint.model_validate(
+            {"type": "json_schema", "schema": entities_schema(types)}
+        )
+        hint = (
+            "List every named entity in the user's text, copying each one exactly "
+            "as it is written. " + format_hint(constraint)
+        )
+        body = self._body(
+            [
+                {"role": "system", "content": hint},
+                {"role": "user", "content": request.text},
+            ],
+            SamplingParams(temperature=0.0, max_tokens=1024),
+        )
+        body["structured_outputs"] = structured_outputs(constraint)
+        body["logprobs"] = True
+        reply, usage = await self._chat(body)
+        if reply.finish_reason == "length":
+            raise OutputTruncatedError("the entity list was cut off at max_tokens")
+        answer = parse_output(constraint, reply.message.content or "")
+        assert isinstance(answer, dict)
+        found = [(e["text"], e["label"]) for e in answer["entities"]]
+        score = average_token_probability(_token_logprobs(reply))
+        spans = tuple(
+            span
+            for span in locate(request.text, found, score)
+            if span.score >= request.min_score
+        )
+        result = ExtractSpansResult(task="extract_spans", spans=spans)
+        return EngineOutput(result=result, usage=usage)
 
     def _body(
         self, messages: list[dict[str, str]], sampling: SamplingParams
@@ -286,6 +353,61 @@ class VLLMBackend:
             forward_passes=max(tokens, 1),
         )
         return reply, usage
+
+
+def _token_logprobs(reply: _Choice) -> list[float]:
+    if reply.logprobs is None or not reply.logprobs.content:
+        raise UpstreamError("vLLM did not send the logprobs we asked for")
+    return [t.logprob for t in reply.logprobs.content]
+
+
+def sequence_probability(logprobs: Sequence[float]) -> float:
+    """P(whole answer) = product of each token's probability = exp(sum of logprobs)."""
+    logprob_sum = sum(logprobs)
+    return min(1.0, math.exp(logprob_sum))
+
+
+def average_token_probability(logprobs: Sequence[float]) -> float:
+    """A rough, answer-level confidence: the geometric mean of token probabilities."""
+    return min(1.0, math.exp(sum(logprobs) / len(logprobs)))
+
+
+def entities_schema(types: Sequence[str]) -> dict[str, Any]:
+    entity = {
+        "type": "object",
+        "properties": {"text": {"type": "string"}, "label": {"enum": list(types)}},
+        "required": ["text", "label"],
+    }
+    return {
+        "type": "object",
+        "properties": {"entities": {"type": "array", "items": entity}},
+        "required": ["entities"],
+    }
+
+
+def locate(text: str, found: Sequence[tuple[str, str]], score: float) -> list[Span]:
+    """Turn (entity text, label) pairs into spans by finding them in the text.
+
+    The model only says *what* it saw. Where it is, we look up ourselves; anything
+    that isn't in the text at all is dropped. A name mentioned twice is found twice.
+    """
+    spans: list[Span] = []
+    next_search: dict[str, int] = {}
+    for entity, label in found:
+        start = text.find(entity, next_search.get(entity, 0)) if entity else -1
+        if start < 0:
+            continue
+        next_search[entity] = start + len(entity)
+        spans.append(
+            Span(
+                start=start,
+                end=start + len(entity),
+                label=label,
+                text=entity,
+                score=score,
+            )
+        )
+    return spans
 
 
 def _error_message(response: httpx2.Response) -> str:
