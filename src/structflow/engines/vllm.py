@@ -260,7 +260,13 @@ class VLLMBackend:
     async def score_labels(
         self, request: ClassifyRequest
     ) -> EngineOutput[ClassifyResult]:
-        """The model picks one label (a choice constraint) and tells us how sure it was."""
+        """Let the model pick one label under a choice constraint.
+        The score is NOT the model's belief that the label is true. vLLM reports
+        logprobs after the grammar mask (measured on vLLM 0.32: blocked tokens come
+        back at -9999 and the allowed ones sum to 1), so the score only compares the
+        given labels with each other. It also follows one tokenization of the label,
+        so it is a lower bound on the label's probability.
+        """
         if request.multi_label:
             raise UnsupportedRequestError(f"{self.name} picks exactly one label")
         constraint = ChoiceConstraint(type="choice", choices=request.labels)
@@ -292,8 +298,10 @@ class VLLMBackend:
             {"type": "json_schema", "schema": entities_schema(types)}
         )
         hint = (
-            "List every named entity in the user's text, copying each one exactly "
-            "as it is written. " + format_hint(constraint)
+            f"Find entities of these types only: {', '.join(types)}. "
+            "Skip anything that is not one of these types. "
+            "Copy each entity exactly as it is written in the text. "
+            'If there are none, reply with {"entities": []}. ' + format_hint(constraint)
         )
         body = self._body(
             [

@@ -167,3 +167,13 @@ async def test_the_router_falls_back_to_vllm_for_unknown_entity_types() -> None:
     assert response.route_trail == (Route.SPAN_HEAD, Route.CONSTRAINED_GENERATION)
     assert isinstance(response.result, ExtractSpansResult)
     assert [s.text for s in response.result.spans] == ["Paris"]
+
+
+async def test_span_extraction_lets_the_model_skip_other_entities() -> None:
+    fake = FakeVLLM('{"entities": []}', [math.log(0.9)])
+    out = await backend(fake).extract_spans(extract(entity_types=["PRODUCT", "PRICE"]))
+    system = fake.sent[0]["messages"][0]
+    assert system["role"] == "system"
+    assert "PRODUCT, PRICE" in system["content"]
+    assert "Skip anything" in system["content"]
+    assert out.result.spans == ()

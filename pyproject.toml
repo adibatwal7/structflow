@@ -30,3 +30,4 @@ timeout = 10
 strict = true
 plugins = ["pydantic.mypy"]
 enable_error_code = ["possibly-undefined"]
+files = ["src"]
