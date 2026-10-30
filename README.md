@@ -11,14 +11,15 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-gateway-009688?logo=fastapi&logoColor=white)
 ![vLLM](https://img.shields.io/badge/vLLM-structured__outputs-30A2FF)
 ![XGrammar](https://img.shields.io/badge/XGrammar-token%20bitmasks-6A1B9A)
-![Status](https://img.shields.io/badge/status-phase%201%20%C2%B7%20contracts-F9A825)
+![Status](https://img.shields.io/badge/status-phase%203%20%C2%B7%20vLLM%20engine-F9A825)
+![Tests](https://img.shields.io/badge/tests-321%20passing-2E7D32)
 
 *The fastest token is the one you never generate.*
 
 </div>
 
 > [!IMPORTANT]
-> StructFlow is being built in public, one phase at a time. **Today it is in Phase 1 (contracts).** The diagrams below describe the target architecture; the [roadmap](#roadmap) shows exactly what is real so far.
+> StructFlow is being built in public, one phase at a time. **Phases 1 and 2 are done, and Phase 3 (vLLM + XGrammar) is running on a real GPU.** The diagrams below describe the target architecture; the [roadmap](#roadmap) shows exactly what is real so far, and **[What I measured](docs/findings.md)** has the numbers.
 
 ---
 
@@ -58,7 +59,7 @@ StructFlow removes the loop instead of making it faster.
 | 🧭 **Constrained generation** | JSON Schema, regex, choice, grammar | vLLM + XGrammar token bitmask | N (short) | The output parses, if generation finishes |
 | 💬 **Open generation** | Open-ended questions | vLLM, no mask | N | None needed |
 
-The constrained lane has a trick for classification when no local head knows the labels: **LLM label scoring.** If every label starts with a different token, a `choice` constraint with `max_tokens=1` turns the 8B model into a one-step K-way classifier.
+The constrained lane also covers classification when no local head knows the labels: **LLM label scoring.** A `choice` constraint lets the 8B model write only one of the given labels, and the score comes from its token logprobs. One caveat, [measured on vLLM](docs/findings.md#3-vllms-logprobs-are-taken-after-the-grammar-mask): those logprobs are taken after the grammar mask, so the score ranks the given labels against each other; it is not the model's belief that the label is true.
 
 ```mermaid
 quadrantChart
@@ -114,8 +115,8 @@ flowchart TD
 
 - **The event loop never runs a model.** Encoder heads run behind an async micro-batcher on a dedicated executor. Requests are grouped for up to a few milliseconds, then served by one batched forward pass.
 - **The gateway doesn't batch LLM requests.** vLLM's continuous batching already does that better. The gateway forwards requests concurrently over one shared HTTP client.
-- **Backpressure is explicit.** A per-backend semaphore caps requests in flight. When saturated, the gateway answers `429`/`503` with `Retry-After` instead of letting vLLM's queue silently inflate time-to-first-token.
-- **Abandoned requests free memory.** A client disconnect aborts the upstream generation, so its KV-cache blocks go back to the pool.
+- **Backpressure is explicit.** The encoder queues are bounded and LLM requests in flight are capped. When full, the gateway answers `503` with `Retry-After` at once instead of letting a queue silently inflate latency ([why it matters](docs/findings.md#a-bounded-queue-protects-the-tail)).
+- **Abandoned requests free memory.** A client disconnect (or the gateway's own deadline) cancels the upstream generation, so its KV-cache blocks go back to the pool. [Verified on a GPU](docs/findings.md#4-cancellation-reaches-the-gpu).
 - **vLLM stays private.** It sits on an internal network that only the gateway can reach.
 
 ## Life of a structured request
@@ -176,8 +177,8 @@ Moving and applying the mask is cheap. The real costs are **CPU-side mask comput
 
 1. **Truncation.** A response cut off by `max_tokens` is an invalid prefix. "Always parses" holds only for `finish_reason == "stop"`, so StructFlow returns an explicit `output_truncated` error and tracks truncation as its own metric.
 2. **Distribution distortion.** Renormalizing at each step is not the same as conditioning on valid outputs. The mask enforces syntax; the prompt still has to carry the meaning, so the schema goes in the prompt too.
-3. **Whitespace loops.** JSON allows unlimited whitespace, and a model can emit newlines until it hits the cap. StructFlow constrains whitespace.
-4. **Syntax is not truth.** A schema-valid object can still be wrong, and some JSON Schema keywords may not be enforceable by a given backend. Every output is post-validated.
+3. **Whitespace loops.** JSON allows unlimited whitespace, and a model can emit newlines until it hits the cap. Even when it doesn't, pretty-printing costs tokens: about a third of one measured JSON answer was formatting. Constraining whitespace is next (Step 3.5).
+4. **Syntax is not truth.** A schema-valid object can still be wrong, and some JSON Schema keywords may not be enforceable by a given backend. Every output is post-validated. A narrow schema can even *push* the model into a wrong answer when the prompt gives it no way to say "none": [a real example](docs/findings.md#2-a-constraint-guarantees-the-shape-not-the-truth).
 
 </details>
 
@@ -212,6 +213,20 @@ xychart-beta
 - LLM label scoring still pays for the prompt (prefill), but it collapses ~16 sequential decode steps into 1. There, the win is **latency**, not FLOPs.
 - Prefix caching of the shared system prompt can shrink the prefill further.
 
+## Measured so far
+
+Single-request experiments on real models. Details, methods and caveats: **[docs/findings.md](docs/findings.md)**.
+
+| Finding | Number |
+|---|---|
+| Micro-batching the softmax head (64 requests, Apple `mps`) | **2.4×** faster than one at a time |
+| Bounded queue vs a big one at 400 req/s | p99 **80 ms** vs **782 ms** |
+| Small head vs LLM fallback, one classification | **132 ms** vs **602 ms** |
+| Fixing the entity prompt's escape hatch | wrong label gone, **67 → 31** tokens, **1.6 → 0.9 s** |
+| Llama-3.1-8B decode speed, 1 request, RTX 4090 | **≈ 59 tokens/s** (memory-bandwidth bound) |
+| KV cache per token, Llama-3.1-8B | **128 KiB**; 4.49 GiB holds 36,768 tokens |
+| Client hang-up or gateway timeout | vLLM stops generating within one log window |
+
 ## What Phase 4 will measure
 
 | Metric | Why it matters |
@@ -228,7 +243,7 @@ xychart-beta
 ## API preview
 
 > [!TIP]
-> These shapes are being finalized in Phase 1, and the endpoint lands in Phase 2. Values are illustrative.
+> The endpoint is live. Values below are illustrative; the published JSON Schemas are in [`docs/contracts/`](docs/contracts/).
 
 **Classify with a local head**
 
@@ -284,6 +299,8 @@ xychart-beta
 
 ## Quickstart (what runs today)
 
+**1. Install and test.** No GPU or model downloads needed: the default backends are fakes.
+
 ```bash
 git clone https://github.com/adibatwal7/structflow.git
 cd structflow
@@ -291,41 +308,110 @@ python -m venv .venv && source .venv/bin/activate
 python -m pip install -e ".[dev]"
 cp .env.example .env
 pytest
-python -c "from structflow.config import get_settings; print(get_settings())"
 ```
 
-**Configuration.** Settings are read from `STRUCTFLOW_*` environment variables or `.env`, and validated at startup. A bad value refuses to boot instead of misbehaving later.
+**2. Run the gateway and send a request.**
+
+```bash
+uvicorn --factory structflow.gateway.app:create_app --port 8080
+```
+
+```bash
+curl -s localhost:8080/readyz
+curl -s localhost:8080/v1/infer -H "Content-Type: application/json" \
+  -d '{"task":"classify","text":"The food was great","labels":["great","awful"]}'
+```
+
+**3. Use real small models** (downloads two DistilBERT models from Hugging Face; runs on CPU, CUDA or Apple `mps`):
+
+```bash
+python -m pip install -e ".[dev,ml]"
+export STRUCTFLOW_CLASSIFIER_BACKEND=hf
+export STRUCTFLOW_SPAN_BACKEND=hf
+uvicorn --factory structflow.gateway.app:create_app --port 8080
+```
+
+**4. Connect a vLLM server** for the generation lanes. Start vLLM on a GPU machine, bound to localhost and protected by a key:
+
+```bash
+vllm serve meta-llama/Llama-3.1-8B-Instruct --host 127.0.0.1 --port 8000 \
+  --api-key "$VLLM_KEY" --max-model-len 8192 \
+  --structured-outputs-config.backend xgrammar
+```
+
+If vLLM runs on another machine, reach it through an SSH tunnel rather than exposing it (`ssh -N -L 8000:127.0.0.1:8000 user@gpu-host`). Then point StructFlow at it:
+
+```bash
+export STRUCTFLOW_GENERATOR_BACKEND=vllm
+export STRUCTFLOW_VLLM_BASE_URL=http://localhost:8000/v1
+export STRUCTFLOW_VLLM_API_KEY="$VLLM_KEY"
+uvicorn --factory structflow.gateway.app:create_app --port 8080
+```
+
+**5. Load-test it** with the built-in open-loop load generator:
+
+```bash
+python -m structflow.bench.load --task classify --rps 200 --duration 10
+```
+
+**Configuration.** Settings are read from `STRUCTFLOW_*` environment variables or `.env`, and validated at startup. A bad value refuses to boot instead of misbehaving later. [`.env.example`](.env.example) lists them all.
 
 | Variable | Default | Meaning |
 |---|---|---|
+| `STRUCTFLOW_CLASSIFIER_BACKEND` | `fake` | Softmax head: `fake` (no model) or `hf` (Hugging Face model) |
+| `STRUCTFLOW_CLASSIFIER_MODEL` | `distilbert/distilbert-base-uncased-finetuned-sst-2-english` | Model for the softmax head |
+| `STRUCTFLOW_SPAN_BACKEND` | `fake` | Span head: `fake` or `hf` |
+| `STRUCTFLOW_SPAN_MODEL` | `dslim/distilbert-NER` | Token-classification model for the span head |
+| `STRUCTFLOW_CLASSIFIER_DEVICE`, `STRUCTFLOW_SPAN_DEVICE` | `auto` | `auto`, `cpu`, `cuda` or `mps` |
+| `STRUCTFLOW_CLASSIFIER_MAX_LENGTH` | `512` | Longer texts are truncated |
+| `STRUCTFLOW_SPAN_MAX_LENGTH` | `512` | Longer texts are refused, never cut (spans must stay exact) |
+| `STRUCTFLOW_MICROBATCH_MAX_SIZE` | `8` | Max inputs per encoder forward pass |
+| `STRUCTFLOW_MICROBATCH_MAX_WAIT_MS` | `5` | Max wait to fill a batch (0–100 ms) |
+| `STRUCTFLOW_MICROBATCH_MAX_QUEUE` | `256` | Requests waiting per head before answering `503` |
+| `STRUCTFLOW_GENERATOR_BACKEND` | `fake` | Generation lanes: `fake` (no GPU) or `vllm` |
 | `STRUCTFLOW_VLLM_BASE_URL` | `http://localhost:8000/v1` | OpenAI-compatible vLLM endpoint (trailing `/` stripped) |
 | `STRUCTFLOW_VLLM_API_KEY` | `EMPTY` | Must match `vllm serve --api-key`; stored as `SecretStr`, never logged |
 | `STRUCTFLOW_MODEL_NAME` | `meta-llama/Llama-3.1-8B-Instruct` | Generative model served by vLLM |
-| `STRUCTFLOW_REQUEST_TIMEOUT_S` | `60.0` | Upstream timeout in seconds (> 0) |
-| `STRUCTFLOW_MAX_INFLIGHT_GENERATION` | `64` | Concurrent requests allowed at vLLM |
-| `STRUCTFLOW_MICROBATCH_MAX_SIZE` | `8` | Max inputs per encoder forward pass |
-| `STRUCTFLOW_MICROBATCH_MAX_WAIT_MS` | `5` | Max wait to fill a batch (0–100 ms) |
+| `STRUCTFLOW_REQUEST_TIMEOUT_S` | `60.0` | Deadline for one LLM request (`504` after this) |
+| `STRUCTFLOW_MAX_INFLIGHT_GENERATION` | `64` | LLM requests allowed in flight (`503` beyond this) |
+| `STRUCTFLOW_FAKE_GENERATION_DELAY_MS` | `0` | Make the fake LLM slow, to try limits and timeouts locally |
 | `STRUCTFLOW_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING` or `ERROR` |
+
+**Errors.** Every error is an [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) problem document with a stable `code`:
+
+| Code | HTTP | When |
+|---|---|---|
+| `validation_error` | 422 | The request doesn't match the contract |
+| `unsupported_request` | 422 | No engine on the route can serve it (e.g. a request outside every engine's abilities) |
+| `constraint_compile_failed` | 422 | vLLM couldn't compile the regex, schema or grammar |
+| `output_truncated` | 422 | A structured answer hit `max_tokens` before it was complete |
+| `client_disconnected` | 499 | The client hung up; the upstream work was cancelled |
+| `output_invalid` | 502 | The model's answer broke its constraint (never passed on) |
+| `upstream_error` | 502 | vLLM failed or couldn't be reached |
+| `backend_saturated` | 503 | A queue or in-flight limit is full; retry after `Retry-After` |
+| `not_ready` | 503 | Models are still loading (see `/readyz`) |
+| `upstream_timeout` | 504 | vLLM didn't finish within `STRUCTFLOW_REQUEST_TIMEOUT_S` |
 
 ## Repository layout
 
 ```text
 structflow/
-├── pyproject.toml                ✅ packaging, extras, tooling
+├── pyproject.toml                ✅ packaging, extras (dev, ml), tooling
 ├── .env.example                  ✅ every setting, documented
 ├── docs/
-│   ├── 01-cdm-theory.md          🚧 decoding regimes, masks, cost model
-│   └── contracts/                🚧 exported JSON Schemas (contract diffs)
+│   ├── 01-cdm-theory.md          ✅ decoding regimes, masks, cost model
+│   ├── findings.md               ✅ what I measured, with methods
+│   └── contracts/                ✅ exported JSON Schemas (contract diffs)
 ├── src/structflow/
 │   ├── config.py                 ✅ typed, fail-fast settings
-│   ├── schemas/                  🚧 the wire contract (Phase 1)
-│   ├── engines/                  🗺️ GenerationBackend, vLLM backends, schema compiler (Phase 3)
-│   ├── gateway/                  🗺️ FastAPI app, routes, middleware (Phase 2)
-│   ├── routing/                  🗺️ policy table + router (Phase 2)
-│   ├── heads/                    🗺️ encoder heads, micro-batcher (Phase 2)
+│   ├── schemas/                  ✅ the wire contract: requests, responses, constraints, errors
+│   ├── gateway/                  ✅ FastAPI app, /v1/infer, health, request IDs, disconnects
+│   ├── routing/                  ✅ cheapest-first router, span grounding
+│   ├── engines/                  ✅ micro-batcher, HF softmax + span heads, vLLM backend, limits
+│   │                             🚧 streaming and TTFT (Step 3.5)
+│   ├── bench/                    ✅ open-loop load generator
 │   └── telemetry/                🗺️ tracing, metrics, drift (Phase 4)
-├── benchmarks/                   🗺️ benchmark_engine.py (Phase 4)
-├── tests/unit/                   ✅ settings tests
+├── tests/                        ✅ 321 tests: unit, contract, engines, gateway, integration
 └── deploy/                       🗺️ Dockerfile, docker-compose.yml (Phase 5)
 ```
 <sub>✅ built · 🚧 in progress · 🗺️ planned</sub>
@@ -337,31 +423,39 @@ timeline
     title StructFlow build plan
     Phase 1 - Contracts : CDM theory : Pydantic v2 wire schemas : Typed settings
     Phase 2 - Gateway : FastAPI and the router : Softmax and span heads : Async micro-batching
-    Phase 3 - Constrained engine : vLLM with XGrammar : Schema compiler : KV cache and TTFT analysis
+    Phase 3 - Constrained engine : vLLM with XGrammar : LLM label scoring and extraction : KV cache and TTFT analysis
     Phase 4 - Proof : Benchmark engine : P50 and P99 latency, TPOT, parse failures : Tracing and drift tracking
     Phase 5 - Ship : Docker and Compose : Charts from measured data
 ```
 
-**Phase 1 · Contracts** 🚧
-- [x] Project scaffold: src layout, editable install, pytest, ruff, mypy
+**Phase 1 · Contracts** ✅
+- [x] Project scaffold: src layout, editable install, pytest, ruff, mypy (strict)
 - [x] Typed, fail-fast settings with `STRUCTFLOW_*` variables and a `SecretStr` API key
-- [ ] Wire schemas: common, constraints, requests, responses, errors
-- [ ] Contract tests and exported JSON Schemas in `docs/contracts/`
-- [ ] Theory write-up in `docs/01-cdm-theory.md`
+- [x] Wire schemas: common, constraints, requests, responses, errors
+- [x] Contract tests and exported JSON Schemas in `docs/contracts/`
+- [x] Theory write-up in `docs/01-cdm-theory.md`
 
-**Phase 2 · Gateway and local heads**
-- [ ] FastAPI gateway with a single `/v1/infer` endpoint
-- [ ] Router policy table: cheapest path that satisfies the contract
-- [ ] Softmax head and span head behind an async micro-batcher
+**Phase 2 · Gateway and local heads** ✅
+- [x] FastAPI gateway with a single `/v1/infer` endpoint, `/healthz` and `/readyz`
+- [x] Async micro-batcher: bounded queue, fail-fast `503`, cancellation-safe
+- [x] Softmax head (Hugging Face sequence classifier), loaded in the background
+- [x] Span head (NER): BIO decoding, exact character offsets, overlong text refused
+- [x] Router: cheapest path first, fall back only when a head can't serve the request, honest `route_trail`
+- [x] Generation limits: in-flight cap, deadline, client-disconnect cancellation
+- [x] Open-loop load generator and end-to-end tests against the published schemas
 
-**Phase 3 · Constrained engine**
-- [ ] `GenerationBackend` protocol with vLLM HTTP and in-process backends
-- [ ] Schema compiler: lint, canonical hash, grammar warm cache
-- [ ] LLM label scoring lane
-- [ ] Memory, KV-cache and TTFT analysis of masked decoding under concurrency
+**Phase 3 · Constrained engine** 🚧
+- [x] vLLM backend: JSON Schema, regex, choice and grammar constraints; every answer re-checked
+- [x] Clear upstream errors: truncation, invalid output, rejections, timeouts, unreachable vLLM
+- [x] LLM label scoring and LLM entity extraction (grounded in the input text)
+- [x] Opt-in degraded fallback to unconstrained generation, always validated
+- [x] Running on a real GPU: routes, cancellation, logprobs and KV cache verified ([findings](docs/findings.md))
+- [ ] Streaming: time to first token and time per output token
+- [ ] Cost of the grammar mask, and constrained JSON whitespace
+- [ ] Memory, KV-cache and TTFT analysis under concurrency
 
 **Phase 4 · Proof**
-- [ ] `benchmarks/benchmark_engine.py` against an unconstrained baseline
+- [ ] Benchmark engine against an unconstrained generate-and-parse baseline
 - [ ] Request-lifecycle tracing and payload drift tracking
 
 **Phase 5 · Ship**
