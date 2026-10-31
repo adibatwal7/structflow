@@ -181,15 +181,3 @@ async def test_span_extraction_lets_the_model_skip_other_entities() -> None:
     assert "PRODUCT, PRICE" in system["content"]
     assert "Skip anything" in system["content"]
     assert out.result.spans == ()
-
-
-async def test_span_extraction_uses_compact_json_when_asked() -> None:
-    fake = FakeVLLM(json.dumps({"entities": []}), [math.log(0.9)])
-    compact = VLLMBackend(
-        base_url="http://vllm.test/v1",
-        model="llama",
-        compact_json=True,
-        transport=httpx2.MockTransport(fake),
-    )
-    await compact.extract_spans(extract(entity_types=["LOC"]))
-    assert fake.sent[0]["structured_outputs"]["disable_any_whitespace"] is True

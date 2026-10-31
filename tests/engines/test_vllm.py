@@ -231,6 +231,12 @@ async def test_a_400_is_a_rejection_with_vllms_reason(error: dict[str, Any]) -> 
         await backend(fake).generate(generate())
 
 
+async def test_a_wrong_api_key_says_so() -> None:
+    fake = FakeVLLM(status=401, error={"error": "Unauthorized"})
+    with pytest.raises(UpstreamError, match="401: Unauthorized"):
+        await backend(fake).generate(generate())
+
+
 async def test_a_server_error_is_an_upstream_error() -> None:
     fake = FakeVLLM(status=500, error={"message": "CUDA out of memory"})
     with pytest.raises(UpstreamError, match="500"):
@@ -307,24 +313,8 @@ async def test_a_stream_that_breaks_is_an_upstream_error() -> None:
         await backend(broken).generate(generate())
 
 
-async def test_compact_json_forbids_whitespace_in_json_only() -> None:
-    fake = FakeVLLM('{"vendor":"ACME"}')
-    compact = VLLMBackend(
-        base_url="http://vllm.test/v1",
-        model="llama",
-        compact_json=True,
-        transport=httpx2.MockTransport(fake),
-    )
-    await compact.generate_structured(
-        structured({"type": "json_schema", "schema": VENDOR_SCHEMA})
-    )
-    await compact.generate_structured(structured({"type": "regex", "pattern": ".+"}))
-    json_sent, regex_sent = fake.sent
-    assert json_sent["structured_outputs"]["disable_any_whitespace"] is True
-    assert "disable_any_whitespace" not in regex_sent["structured_outputs"]
-
-
-async def test_whitespace_is_allowed_by_default() -> None:
+async def test_structured_outputs_carry_no_whitespace_flag() -> None:
+    """Whitespace is a vLLM server setting; a per-request flag is ignored."""
     fake = FakeVLLM('{"vendor": "ACME"}')
     await backend(fake).generate_structured(
         structured({"type": "json_schema", "schema": VENDOR_SCHEMA})

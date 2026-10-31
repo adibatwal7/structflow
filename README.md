@@ -11,15 +11,15 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-gateway-009688?logo=fastapi&logoColor=white)
 ![vLLM](https://img.shields.io/badge/vLLM-structured__outputs-30A2FF)
 ![XGrammar](https://img.shields.io/badge/XGrammar-token%20bitmasks-6A1B9A)
-![Status](https://img.shields.io/badge/status-phase%203%20%C2%B7%20vLLM%20engine-F9A825)
-![Tests](https://img.shields.io/badge/tests-321%20passing-2E7D32)
+![Status](https://img.shields.io/badge/status-phase%204%20%C2%B7%20benchmarks-F9A825)
+![Tests](https://img.shields.io/badge/tests-334%20passing-2E7D32)
 
 *The fastest token is the one you never generate.*
 
 </div>
 
 > [!IMPORTANT]
-> StructFlow is being built in public, one phase at a time. **Phases 1 and 2 are done, and Phase 3 (vLLM + XGrammar) is running on a real GPU.** The diagrams below describe the target architecture; the [roadmap](#roadmap) shows exactly what is real so far, and **[What I measured](docs/findings.md)** has the numbers.
+> StructFlow is being built in public, one phase at a time. **Phases 1–3 are done: the gateway, the small models, and vLLM + XGrammar on a real GPU. Phase 4 (benchmarks) is next.** The diagrams below describe the target architecture; the [roadmap](#roadmap) shows exactly what is real so far, and **[What I measured](docs/findings.md)** has the numbers.
 
 ---
 
@@ -177,7 +177,7 @@ Moving and applying the mask is cheap. The real costs are **CPU-side mask comput
 
 1. **Truncation.** A response cut off by `max_tokens` is an invalid prefix. "Always parses" holds only for `finish_reason == "stop"`, so StructFlow returns an explicit `output_truncated` error and tracks truncation as its own metric.
 2. **Distribution distortion.** Renormalizing at each step is not the same as conditioning on valid outputs. The mask enforces syntax; the prompt still has to carry the meaning, so the schema goes in the prompt too.
-3. **Whitespace loops.** JSON allows unlimited whitespace, and a model can emit newlines until it hits the cap. Even when it doesn't, pretty-printing costs tokens: about a third of one measured JSON answer was formatting. Constraining whitespace is next (Step 3.5).
+3. **Whitespace loops.** JSON allows unlimited whitespace, and a model can emit newlines until it hits the cap. Even when it doesn't, pretty-printing costs tokens. Banning optional whitespace [cut one measured answer from 96 to 54 tokens](docs/findings.md#8-what-constrained-decoding-actually-costs). In vLLM 0.32 that is a server startup flag, so the recommended `vllm serve` command below turns it on.
 4. **Syntax is not truth.** A schema-valid object can still be wrong, and some JSON Schema keywords may not be enforceable by a given backend. Every output is post-validated. A narrow schema can even *push* the model into a wrong answer when the prompt gives it no way to say "none": [a real example](docs/findings.md#2-a-constraint-guarantees-the-shape-not-the-truth).
 
 </details>
@@ -226,6 +226,9 @@ Single-request experiments on real models. Details, methods and caveats: **[docs
 | Llama-3.1-8B decode speed, 1 request, RTX 4090 | **≈ 59 tokens/s** (memory-bandwidth bound) |
 | KV cache per token, Llama-3.1-8B | **128 KiB**; 4.49 GiB holds 36,768 tokens |
 | Client hang-up or gateway timeout | vLLM stops generating within one log window |
+| Grammar mask cost per token (JSON Schema, XGrammar) | **+0.1 ms** on 15.7 ms (< 1%) |
+| Compiling a never-seen grammar | **≈ 170 ms**, once, then cached |
+| Banning JSON whitespace | **96 → 54 tokens (−44%)**, ≈ 0.7 s saved per answer |
 
 ## What Phase 4 will measure
 
@@ -271,7 +274,7 @@ Single-request experiments on real models. Details, methods and caveats: **[docs
     ]
   },
   "usage": { "prompt_tokens": 14, "completion_tokens": 0, "forward_passes": 1 },
-  "timings": { /* queue_ms, inference_ms, total_ms: measured per request */ }
+  "timings": { /* queue_ms, inference_ms, total_ms; ttft_ms and tpot_ms when an LLM answered */ }
 }
 ```
 
@@ -336,7 +339,7 @@ uvicorn --factory structflow.gateway.app:create_app --port 8080
 ```bash
 vllm serve meta-llama/Llama-3.1-8B-Instruct --host 127.0.0.1 --port 8000 \
   --api-key "$VLLM_KEY" --max-model-len 8192 \
-  --structured-outputs-config.backend xgrammar
+  --structured-outputs-config '{"backend": "xgrammar", "disable_any_whitespace": true}'
 ```
 
 If vLLM runs on another machine, reach it through an SSH tunnel rather than exposing it (`ssh -N -L 8000:127.0.0.1:8000 user@gpu-host`). Then point StructFlow at it:
@@ -407,11 +410,11 @@ structflow/
 │   ├── schemas/                  ✅ the wire contract: requests, responses, constraints, errors
 │   ├── gateway/                  ✅ FastAPI app, /v1/infer, health, request IDs, disconnects
 │   ├── routing/                  ✅ cheapest-first router, span grounding
-│   ├── engines/                  ✅ micro-batcher, HF softmax + span heads, vLLM backend, limits
-│   │                             🚧 streaming and TTFT (Step 3.5)
+│   ├── engines/                  ✅ micro-batcher, HF softmax + span heads, limits,
+│   │                                vLLM backend with streaming and token timing
 │   ├── bench/                    ✅ open-loop load generator
 │   └── telemetry/                🗺️ tracing, metrics, drift (Phase 4)
-├── tests/                        ✅ 321 tests: unit, contract, engines, gateway, integration
+├── tests/                        ✅ 334 tests: unit, contract, engines, gateway, integration
 └── deploy/                       🗺️ Dockerfile, docker-compose.yml (Phase 5)
 ```
 <sub>✅ built · 🚧 in progress · 🗺️ planned</sub>
@@ -444,18 +447,18 @@ timeline
 - [x] Generation limits: in-flight cap, deadline, client-disconnect cancellation
 - [x] Open-loop load generator and end-to-end tests against the published schemas
 
-**Phase 3 · Constrained engine** 🚧
+**Phase 3 · Constrained engine** ✅
 - [x] vLLM backend: JSON Schema, regex, choice and grammar constraints; every answer re-checked
 - [x] Clear upstream errors: truncation, invalid output, rejections, timeouts, unreachable vLLM
 - [x] LLM label scoring and LLM entity extraction (grounded in the input text)
 - [x] Opt-in degraded fallback to unconstrained generation, always validated
 - [x] Running on a real GPU: routes, cancellation, logprobs and KV cache verified ([findings](docs/findings.md))
-- [ ] Streaming: time to first token and time per output token
-- [ ] Cost of the grammar mask, and constrained JSON whitespace
-- [ ] Memory, KV-cache and TTFT analysis under concurrency
+- [x] Streaming: time to first token and time per output token on every LLM response
+- [x] Cost of the grammar mask, grammar compilation, and constrained JSON whitespace ([findings](docs/findings.md#8-what-constrained-decoding-actually-costs))
 
 **Phase 4 · Proof**
 - [ ] Benchmark engine against an unconstrained generate-and-parse baseline
+- [ ] Throughput, p50/p99 and TTFT under concurrency; KV-cache pressure
 - [ ] Request-lifecycle tracing and payload drift tracking
 
 **Phase 5 · Ship**
@@ -472,6 +475,8 @@ timeline
 | `schemas/` imports no torch or vLLM | Clients, CI and benchmarks can use the contract without a GPU |
 | `output_truncated` is an error, never a result | Keeps "always parses" literally true |
 | `STRUCTFLOW_` prefix and a `SecretStr` API key | No collisions with generic variables; keys never appear in logs |
+| Always stream from vLLM, answer the client in one piece | Token timings (TTFT, TPOT) on every response, with an unchanged API |
+| JSON whitespace is banned at vLLM startup, not per request | vLLM 0.32 ignored the per-request flag; a switch that silently does nothing is worse than none |
 
 ## Standing on the shoulders of
 

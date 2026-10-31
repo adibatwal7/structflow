@@ -15,6 +15,8 @@ Real numbers from running StructFlow, as each phase lands. Every claim here come
 | Serving | StructFlow gateway (uvicorn) | vLLM 0.32.0, XGrammar backend, `--max-model-len 8192`, `--gpu-memory-utilization 0.90` |
 | Network | in-process | gateway on the Mac → SSH tunnel → vLLM bound to `127.0.0.1` on the pod |
 
+Step 3.5 (section 8) ran on a second RTX 4090 pod after a RunPod migration, with the same vLLM 0.32.0.
+
 ---
 
 ## Phase 2: local heads and the gateway
@@ -117,13 +119,52 @@ Whether the client hangs up or the gateway's deadline fires, generation stops wi
 ### 7. Smaller things worth knowing
 
 - **Prefix caching:** sending the same prompt again raised vLLM's prefix-cache hit rate from 15.7% to 20.9%; the shared part of the prompt was not recomputed.
-- **JSON whitespace costs tokens:** the JSON answer came back pretty-printed (`{\n  "name": ...`). Roughly a third of its 26 tokens were formatting. Step 3.5 measures how much forbidding extra whitespace saves.
+- **JSON whitespace costs tokens:** the JSON answer came back pretty-printed (`{\n  "name": ...`). Roughly a third of its 26 tokens were formatting. Section 8 measures what banning it saves.
 - **A fluent answer can be wrong:** asked "what is a KV cache?", the model described a key-value *database*, not the transformer KV cache. Unconstrained output is only "probably right".
 - **Failure is fast and clean:** when the SSH tunnel dropped, requests came back in about 0.25 s as `502 upstream_error`, not a hang.
 
 ---
 
+### 8. What constrained decoding actually costs
+
+**Method.** StructFlow now streams every answer from vLLM and timestamps each chunk, so every response reports **TTFT** (time to first token) and **TPOT** (average time between later tokens). [`scripts/measure_35.py`](../scripts/measure_35.py) sends the same task six times each way: *list the three people in a short text as JSON* (an array of `{name, age, city}`), at temperature 0.
+
+- **Masked JSON:** a `structured` request: the JSON Schema is enforced by XGrammar.
+- **Free JSON:** a `generate` request with the same schema in the system prompt and no mask.
+
+The first call of each run is reported separately; the table shows the median of the next five.
+
+**Run 1: whitespace allowed (vLLM's default)**
+
+| | Masked JSON | Free JSON | Difference |
+|---|---:|---:|---:|
+| TPOT | 15.8 ms | 15.7 ms | +0.1 ms (≈ 0.6%) |
+| TTFT, median | 218 ms | 209 ms | +10 ms |
+| TTFT, first call | 1,233 ms | 208 ms | see below |
+| Tokens | 96 | 96 | same |
+
+**Run 2: whitespace banned for the whole server** (`--structured-outputs-config '{"backend": "xgrammar", "disable_any_whitespace": true}'`)
+
+| | Masked JSON | Free JSON |
+|---|---:|---:|
+| TPOT | 15.3 ms | 15.9 ms |
+| TTFT, median | 259 ms | 210 ms |
+| Tokens | **54** | 96 |
+| Answer | `{"people":[{"name":"Maria Lopez",...` | `{\n  "people": [\n    {...` |
+
+**What this shows:**
+
+1. **The mask is nearly free while writing.** About +0.1 ms on a 15.7 ms token, under 1%. Running the 8B model dominates; checking the grammar is tiny next to it.
+2. **Compiling a new grammar costs about 170 ms, once.** With the server already warm, the first call with a never-seen grammar took 386 ms against a typical 216 ms. After that the grammar is cached.
+3. **A freshly started vLLM pays about 1 s on its first request.** The 1,233 ms (and 1,162 ms after a restart) is warm-up plus compilation. Production should send a warm-up request before taking traffic.
+4. **Banning whitespace saves 44% of the tokens.** 96 → 54 tokens for exactly the same data, so the writing time drops from about 1.5 s to about 0.8 s. It also rules out the whitespace loops where a model keeps writing newlines until it hits the token limit. The free answer stays at 96: without a mask nothing stops the formatting.
+5. **On this easy task the model obeyed without the mask.** Free JSON produced the same valid answer. The mask's value is the **guarantee** on harder inputs, which Phase 4 tests.
+6. **The whitespace setting is server-wide in vLLM 0.32.0.** Sending `"disable_any_whitespace": true` inside a request's `structured_outputs` had **no visible effect**: still 96 tokens, still pretty-printed. Only the startup flag worked. So StructFlow does not offer a per-request switch; the deployment turns it on for everyone.
+
+**Caveats:** five runs per number, one prompt, one GPU, and LLM times include the SSH tunnel. Treat the small differences (the ±10–40 ms in TTFT) as noise until Phase 4 measures them properly.
+
+---
+
 ## Still to measure
 
-- **Step 3.5:** time to first token (streaming), the cost of the grammar mask (constrained vs free generation), and the JSON-whitespace saving.
-- **Phase 4:** throughput and p50/p99 under concurrency, head-to-head against a generate-and-parse baseline, and GPU-seconds saved.
+- **Phase 4:** throughput and p50/p99 under concurrency, how TTFT grows as requests queue, head-to-head against a generate-and-parse baseline on harder inputs, and GPU-seconds saved.

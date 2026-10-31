@@ -100,18 +100,15 @@ class _ChatCompletion(BaseModel):
 # --- Constraints: what to ask vLLM for, what to tell the model, how to check. -----
 
 
-def structured_outputs(
-    constraint: Constraint, *, compact_json: bool = False
-) -> dict[str, Any]:
+def structured_outputs(constraint: Constraint) -> dict[str, Any]:
     """Our constraint, in the shape vLLM's `structured_outputs` field expects.
 
-    compact_json forbids the optional spaces and newlines in JSON, so the model
-    can't spend tokens on formatting that the client throws away anyway.
+    JSON whitespace is not controlled here: in vLLM 0.32 it is a server setting
+    (start vLLM with "disable_any_whitespace": true), and a per-request flag is
+    silently ignored. See docs/findings.md, section 8.
     """
     match constraint:
         case JsonSchemaConstraint():
-            if compact_json:
-                return {"json": constraint.json_schema, "disable_any_whitespace": True}
             return {"json": constraint.json_schema}
         case RegexConstraint():
             return {"regex": constraint.pattern}
@@ -199,11 +196,9 @@ class VLLMBackend:
         api_key: str = "EMPTY",
         timeout_s: float = 60.0,
         max_connections: int = 64,
-        compact_json: bool = False,
         transport: httpx2.AsyncBaseTransport | None = None,
     ) -> None:
         self.name = model
-        self.compact_json = compact_json
         headers = {"Authorization": f"Bearer {api_key}"} if api_key != "EMPTY" else {}
         self._client = httpx2.AsyncClient(
             base_url=base_url,
@@ -221,7 +216,6 @@ class VLLMBackend:
             api_key=settings.vllm_api_key.get_secret_value(),
             timeout_s=settings.request_timeout_s,
             max_connections=settings.max_inflight_generation,
-            compact_json=settings.compact_json,
         )
 
     async def __aenter__(self) -> Self:
@@ -254,9 +248,7 @@ class VLLMBackend:
         messages = with_hint(request.messages, format_hint(constraint))
         body = self._body(messages, request.sampling)
         if constrained:
-            body["structured_outputs"] = structured_outputs(
-                constraint, compact_json=self.compact_json
-            )
+            body["structured_outputs"] = structured_outputs(constraint)
         try:
             reply, usage, times = await self._chat(body)
         except UpstreamRejectedError as exc:
@@ -331,9 +323,7 @@ class VLLMBackend:
             ],
             SamplingParams(temperature=0.0, max_tokens=1024),
         )
-        body["structured_outputs"] = structured_outputs(
-            constraint, compact_json=self.compact_json
-        )
+        body["structured_outputs"] = structured_outputs(constraint)
         body["logprobs"] = True
         reply, usage, times = await self._chat(body)
         if reply.finish_reason == "length":
@@ -478,9 +468,11 @@ def _error_message(response: httpx2.Response) -> str:
     except ValueError:
         return response.text[:200] or "no details"
     if isinstance(data, dict):
-        nested = data.get("error")
+        error = data.get("error")
+        if isinstance(error, str):  # e.g. a 401: {"error": "Unauthorized"}
+            return error
         message = (
-            nested.get("message") if isinstance(nested, dict) else data.get("message")
+            error.get("message") if isinstance(error, dict) else data.get("message")
         )
         if isinstance(message, str):
             return message
