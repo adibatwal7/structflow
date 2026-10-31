@@ -18,11 +18,16 @@ from structflow.schemas.responses import (
 
 @dataclass(frozen=True, slots=True)
 class EngineOutput[R]:
-    """What every engine returns: the result, what it cost, and how long it queued."""
+    """What every engine returns: the result, what it cost, and how long it took.
+
+    ttft_ms and tpot_ms are only known when the answer was streamed (the LLM).
+    """
 
     result: R
     usage: Usage
     queue_ms: float = 0.0
+    ttft_ms: float | None = None
+    tpot_ms: float | None = None
 
 
 class Classifier(Protocol):

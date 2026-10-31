@@ -89,7 +89,10 @@ class Settings(BaseSettings):
         default="fake",
         description="'fake' needs no GPU; 'vllm' calls vLLM's OpenAI-compatible server",
     )
-
+    compact_json: bool = Field(
+        default=False,
+        description="Forbid optional whitespace in constrained JSON (fewer tokens)",
+    )
     fake_generation_delay_ms: int = Field(
         default=0,
         ge=0,

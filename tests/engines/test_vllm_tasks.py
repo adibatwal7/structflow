@@ -9,6 +9,7 @@ import pytest
 
 from structflow.engines.base import UnsupportedRequestError
 from structflow.engines.fake import FakeClassifier, FakeSpanExtractor
+from structflow.engines.stream import encode_chat_stream
 from structflow.engines.vllm import (
     UpstreamError,
     VLLMBackend,
@@ -54,12 +55,14 @@ class FakeVLLM:
             choice["logprobs"] = {
                 "content": [{"token": "t", "logprob": lp} for lp in self.logprobs]
             }
+        completion = {
+            "choices": [choice],
+            "usage": {"prompt_tokens": 20, "completion_tokens": 3},
+        }
         return httpx2.Response(
             200,
-            json={
-                "choices": [choice],
-                "usage": {"prompt_tokens": 20, "completion_tokens": 3},
-            },
+            content=encode_chat_stream(completion),
+            headers={"content-type": "text/event-stream"},
         )
 
 
@@ -167,6 +170,7 @@ async def test_the_router_falls_back_to_vllm_for_unknown_entity_types() -> None:
     assert response.route_trail == (Route.SPAN_HEAD, Route.CONSTRAINED_GENERATION)
     assert isinstance(response.result, ExtractSpansResult)
     assert [s.text for s in response.result.spans] == ["Paris"]
+    assert response.timings.ttft_ms is not None  # grounding kept the timings
 
 
 async def test_span_extraction_lets_the_model_skip_other_entities() -> None:
@@ -177,3 +181,15 @@ async def test_span_extraction_lets_the_model_skip_other_entities() -> None:
     assert "PRODUCT, PRICE" in system["content"]
     assert "Skip anything" in system["content"]
     assert out.result.spans == ()
+
+
+async def test_span_extraction_uses_compact_json_when_asked() -> None:
+    fake = FakeVLLM(json.dumps({"entities": []}), [math.log(0.9)])
+    compact = VLLMBackend(
+        base_url="http://vllm.test/v1",
+        model="llama",
+        compact_json=True,
+        transport=httpx2.MockTransport(fake),
+    )
+    await compact.extract_spans(extract(entity_types=["LOC"]))
+    assert fake.sent[0]["structured_outputs"]["disable_any_whitespace"] is True

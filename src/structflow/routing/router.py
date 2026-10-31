@@ -137,9 +137,11 @@ class Router:
                 result=output.result,
                 usage=output.usage,
                 timings=Timings(
+                    total_ms=total_ms,
+                    ttft_ms=output.ttft_ms,
+                    tpot_ms=output.tpot_ms,
                     queue_ms=output.queue_ms,
                     inference_ms=max(total_ms - output.queue_ms, 0.0),
-                    total_ms=total_ms,
                 ),
             )
         tried = ", ".join(trail)
@@ -152,8 +154,6 @@ class Router:
     ) -> EngineOutput[ExtractSpansResult]:
         output = await self._generator.extract_spans(request)
         spans = ground(request.text, output.result.spans)
-        return EngineOutput(
-            result=ExtractSpansResult(task="extract_spans", spans=spans),
-            usage=output.usage,
-            queue_ms=output.queue_ms,
+        return replace(
+            output, result=ExtractSpansResult(task="extract_spans", spans=spans)
         )

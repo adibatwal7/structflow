@@ -12,6 +12,7 @@ import pytest
 
 from structflow.engines.base import ConstraintRejectedError, OutputInvalidError
 from structflow.engines.limits import GenerationTimeoutError
+from structflow.engines.stream import encode_chat_stream
 from structflow.engines.vllm import (
     OutputTruncatedError,
     UpstreamError,
@@ -60,9 +61,8 @@ class FakeVLLM:
         self.headers.append(request.headers)
         if self.status != 200:
             return httpx2.Response(self.status, json=self.error)
-        return httpx2.Response(
-            200,
-            json={
+        return streamed(
+            {
                 "choices": [
                     {
                         "message": {"role": "assistant", "content": self.content},
@@ -72,6 +72,15 @@ class FakeVLLM:
                 "usage": {"prompt_tokens": 12, "completion_tokens": 7},
             },
         )
+
+
+def streamed(completion: dict[str, Any]) -> httpx2.Response:
+    """Answer the way vLLM does when asked to stream: Server-Sent Events."""
+    return httpx2.Response(
+        200,
+        content=encode_chat_stream(completion),
+        headers={"content-type": "text/event-stream"},
+    )
 
 
 def backend(fake: Any, api_key: str = "EMPTY") -> VLLMBackend:
@@ -273,3 +282,51 @@ async def test_a_refused_constraint_is_a_constraint_error() -> None:
     constraint = {"type": "regex", "pattern": r"\d+"}
     with pytest.raises(ConstraintRejectedError, match="unsupported regex"):
         await backend(fake).generate_structured(structured(constraint))
+
+
+async def test_every_request_is_streamed_with_usage() -> None:
+    fake = FakeVLLM()
+    await backend(fake).generate(generate())
+    (sent,) = fake.sent
+    assert sent["stream"] is True
+    assert sent["stream_options"] == {"include_usage": True}
+
+
+async def test_streaming_gives_us_token_timings() -> None:
+    out = await backend(FakeVLLM("one two three")).generate(generate())
+    assert out.result.text == "one two three"
+    assert out.ttft_ms is not None and out.ttft_ms >= 0
+    assert out.tpot_ms is not None and out.tpot_ms >= 0
+
+
+async def test_a_stream_that_breaks_is_an_upstream_error() -> None:
+    def broken(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=b'data: {"choices": [{"delta": {"con')
+
+    with pytest.raises(UpstreamError):
+        await backend(broken).generate(generate())
+
+
+async def test_compact_json_forbids_whitespace_in_json_only() -> None:
+    fake = FakeVLLM('{"vendor":"ACME"}')
+    compact = VLLMBackend(
+        base_url="http://vllm.test/v1",
+        model="llama",
+        compact_json=True,
+        transport=httpx2.MockTransport(fake),
+    )
+    await compact.generate_structured(
+        structured({"type": "json_schema", "schema": VENDOR_SCHEMA})
+    )
+    await compact.generate_structured(structured({"type": "regex", "pattern": ".+"}))
+    json_sent, regex_sent = fake.sent
+    assert json_sent["structured_outputs"]["disable_any_whitespace"] is True
+    assert "disable_any_whitespace" not in regex_sent["structured_outputs"]
+
+
+async def test_whitespace_is_allowed_by_default() -> None:
+    fake = FakeVLLM('{"vendor": "ACME"}')
+    await backend(fake).generate_structured(
+        structured({"type": "json_schema", "schema": VENDOR_SCHEMA})
+    )
+    assert "disable_any_whitespace" not in fake.sent[0]["structured_outputs"]

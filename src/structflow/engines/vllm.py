@@ -8,6 +8,7 @@ enforce every JSON Schema keyword, and a constraint is a promise to our client.
 import json
 import math
 import re
+import time
 from collections.abc import Sequence
 from functools import lru_cache
 from types import TracebackType
@@ -25,6 +26,7 @@ from structflow.engines.base import (
     UnsupportedRequestError,
 )
 from structflow.engines.limits import GenerationTimeoutError
+from structflow.engines.stream import ChatStream, StreamError, StreamTimes
 from structflow.schemas.common import ChatMessage, SamplingParams
 from structflow.schemas.constraints import (
     ChoiceConstraint,
@@ -98,10 +100,18 @@ class _ChatCompletion(BaseModel):
 # --- Constraints: what to ask vLLM for, what to tell the model, how to check. -----
 
 
-def structured_outputs(constraint: Constraint) -> dict[str, Any]:
-    """Our constraint, in the shape vLLM's `structured_outputs` field expects."""
+def structured_outputs(
+    constraint: Constraint, *, compact_json: bool = False
+) -> dict[str, Any]:
+    """Our constraint, in the shape vLLM's `structured_outputs` field expects.
+
+    compact_json forbids the optional spaces and newlines in JSON, so the model
+    can't spend tokens on formatting that the client throws away anyway.
+    """
     match constraint:
         case JsonSchemaConstraint():
+            if compact_json:
+                return {"json": constraint.json_schema, "disable_any_whitespace": True}
             return {"json": constraint.json_schema}
         case RegexConstraint():
             return {"regex": constraint.pattern}
@@ -189,9 +199,11 @@ class VLLMBackend:
         api_key: str = "EMPTY",
         timeout_s: float = 60.0,
         max_connections: int = 64,
+        compact_json: bool = False,
         transport: httpx2.AsyncBaseTransport | None = None,
     ) -> None:
         self.name = model
+        self.compact_json = compact_json
         headers = {"Authorization": f"Bearer {api_key}"} if api_key != "EMPTY" else {}
         self._client = httpx2.AsyncClient(
             base_url=base_url,
@@ -209,6 +221,7 @@ class VLLMBackend:
             api_key=settings.vllm_api_key.get_secret_value(),
             timeout_s=settings.request_timeout_s,
             max_connections=settings.max_inflight_generation,
+            compact_json=settings.compact_json,
         )
 
     async def __aenter__(self) -> Self:
@@ -224,12 +237,14 @@ class VLLMBackend:
 
     async def generate(self, request: GenerateRequest) -> EngineOutput[GenerateResult]:
         messages = [m.model_dump() for m in request.messages]
-        reply, usage = await self._chat(self._body(messages, request.sampling))
+        reply, usage, times = await self._chat(self._body(messages, request.sampling))
         finish = "length" if reply.finish_reason == "length" else "stop"
         result = GenerateResult(
             task="generate", text=reply.message.content or "", finish_reason=finish
         )
-        return EngineOutput(result=result, usage=usage)
+        return EngineOutput(
+            result=result, usage=usage, ttft_ms=times.ttft_ms, tpot_ms=times.tpot_ms
+        )
 
     async def generate_structured(
         self, request: StructuredRequest, *, constrained: bool = True
@@ -239,9 +254,11 @@ class VLLMBackend:
         messages = with_hint(request.messages, format_hint(constraint))
         body = self._body(messages, request.sampling)
         if constrained:
-            body["structured_outputs"] = structured_outputs(constraint)
+            body["structured_outputs"] = structured_outputs(
+                constraint, compact_json=self.compact_json
+            )
         try:
-            reply, usage = await self._chat(body)
+            reply, usage, times = await self._chat(body)
         except UpstreamRejectedError as exc:
             if not constrained:
                 raise
@@ -255,7 +272,9 @@ class VLLMBackend:
         text = reply.message.content or ""
         output = parse_output(constraint, text)
         result = StructuredResult(task="structured", output=output, raw_text=text)
-        return EngineOutput(result=result, usage=usage)
+        return EngineOutput(
+            result=result, usage=usage, ttft_ms=times.ttft_ms, tpot_ms=times.tpot_ms
+        )
 
     async def score_labels(
         self, request: ClassifyRequest
@@ -280,14 +299,16 @@ class VLLMBackend:
         )
         body["structured_outputs"] = structured_outputs(constraint)
         body["logprobs"] = True
-        reply, usage = await self._chat(body)
+        reply, usage, times = await self._chat(body)
         label = parse_output(constraint, reply.message.content or "")
         assert isinstance(label, str)
         score = sequence_probability(_token_logprobs(reply))
         result = ClassifyResult(
             task="classify", labels=(LabelScore(label=label, score=score),)
         )
-        return EngineOutput(result=result, usage=usage)
+        return EngineOutput(
+            result=result, usage=usage, ttft_ms=times.ttft_ms, tpot_ms=times.tpot_ms
+        )
 
     async def extract_spans(
         self, request: ExtractSpansRequest
@@ -310,9 +331,11 @@ class VLLMBackend:
             ],
             SamplingParams(temperature=0.0, max_tokens=1024),
         )
-        body["structured_outputs"] = structured_outputs(constraint)
+        body["structured_outputs"] = structured_outputs(
+            constraint, compact_json=self.compact_json
+        )
         body["logprobs"] = True
-        reply, usage = await self._chat(body)
+        reply, usage, times = await self._chat(body)
         if reply.finish_reason == "length":
             raise OutputTruncatedError("the entity list was cut off at max_tokens")
         answer = parse_output(constraint, reply.message.content or "")
@@ -325,7 +348,7 @@ class VLLMBackend:
             if span.score >= request.min_score
         )
         result = ExtractSpansResult(task="extract_spans", spans=spans)
-        return EngineOutput(result=result, usage=usage)
+        return _output(result, usage, times)
 
     def _body(
         self, messages: list[dict[str, str]], sampling: SamplingParams
@@ -343,26 +366,32 @@ class VLLMBackend:
             body["seed"] = sampling.seed
         return body
 
-    async def _chat(self, body: dict[str, Any]) -> tuple[_Choice, Usage]:
+    async def _chat(self, body: dict[str, Any]) -> tuple[_Choice, Usage, StreamTimes]:
+        """Send one chat request, streamed, so we can time the tokens as they come."""
+        body = {**body, "stream": True, "stream_options": {"include_usage": True}}
+        stream = ChatStream()
+        started = time.perf_counter()
         try:
-            response = await self._client.post("/chat/completions", json=body)
+            async with self._client.stream(
+                "POST", "/chat/completions", json=body
+            ) as response:
+                if response.status_code >= 400:
+                    await response.aread()  # an error is a normal body, not a stream
+                    _raise_for(response)
+                async for line in response.aiter_lines():
+                    stream.feed(line, time.perf_counter() - started)
+            completion = _ChatCompletion.model_validate(stream.completion())
+            reply = completion.choices[0]
         except httpx2.TimeoutException:
             raise GenerationTimeoutError(
                 f"{self.name} did not answer in time"
             ) from None
         except httpx2.TransportError as exc:
             raise UpstreamError(f"cannot reach vLLM: {exc}") from None
-        if response.status_code == 400:
-            raise UpstreamRejectedError(_error_message(response))
-        if response.status_code >= 400:
+        except (StreamError, ValidationError, IndexError) as exc:
             raise UpstreamError(
-                f"vLLM answered {response.status_code}: {_error_message(response)}"
-            )
-        try:
-            completion = _ChatCompletion.model_validate_json(response.content)
-            reply = completion.choices[0]
-        except (ValidationError, IndexError):
-            raise UpstreamError("vLLM sent a response we could not read") from None
+                f"vLLM sent a response we could not read: {exc}"
+            ) from None
         tokens = completion.usage.completion_tokens
         usage = Usage(
             prompt_tokens=completion.usage.prompt_tokens,
@@ -370,7 +399,21 @@ class VLLMBackend:
             # the prefill pass makes the first token; each later token needs one more
             forward_passes=max(tokens, 1),
         )
-        return reply, usage
+        return reply, usage, stream.times()
+
+
+def _raise_for(response: httpx2.Response) -> None:
+    if response.status_code == 400:
+        raise UpstreamRejectedError(_error_message(response))
+    raise UpstreamError(
+        f"vLLM answered {response.status_code}: {_error_message(response)}"
+    )
+
+
+def _output[R](result: R, usage: Usage, times: StreamTimes) -> EngineOutput[R]:
+    return EngineOutput(
+        result=result, usage=usage, ttft_ms=times.ttft_ms, tpot_ms=times.tpot_ms
+    )
 
 
 def _token_logprobs(reply: _Choice) -> list[float]:

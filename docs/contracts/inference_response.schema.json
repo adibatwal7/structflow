@@ -229,6 +229,19 @@
           ],
           "default": null,
           "title": "Ttft Ms"
+        },
+        "tpot_ms": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tpot Ms"
         }
       },
       "required": [

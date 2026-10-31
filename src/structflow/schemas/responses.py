@@ -24,6 +24,7 @@ class Timings(StrictModel):
     total_ms: Millis
     compile_ms: Millis | None = None
     ttft_ms: Millis | None = None
+    tpot_ms: Millis | None = None
 
 
 # Part 3: Results
