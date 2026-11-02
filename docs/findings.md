@@ -2,7 +2,7 @@
 
 Real numbers from running StructFlow, as each phase lands. Every claim here comes from an experiment you can repeat; the command is next to it.
 
-> **Scope:** single requests and small experiments. They show *what is true*, not *how fast it is at scale*. Phase 4 adds proper benchmarks (many runs, percentiles, concurrency sweeps).
+> **Scope:** Phases 2 and 3 are single requests and small experiments: they show *what is true*. Phase 4 (sections 9 to 11) is a benchmark against the usual prompt-and-parse approach, at several concurrency levels. Each Phase 4 configuration ran once, so small differences can be noise.
 
 ---
 
@@ -157,7 +157,7 @@ The first call of each run is reported separately; the table shows the median of
 1. **The mask is nearly free while writing.** About +0.1 ms on a 15.7 ms token, under 1%. Running the 8B model dominates; checking the grammar is tiny next to it.
 2. **Compiling a new grammar costs about 170 ms, once.** With the server already warm, the first call with a never-seen grammar took 386 ms against a typical 216 ms. After that the grammar is cached.
 3. **A freshly started vLLM pays about 1 s on its first request.** The 1,233 ms (and 1,162 ms after a restart) is warm-up plus compilation. Production should send a warm-up request before taking traffic.
-4. **Banning whitespace saves 44% of the tokens.** 96 → 54 tokens for exactly the same data, so the writing time drops from about 1.5 s to about 0.8 s. It also rules out the whitespace loops where a model keeps writing newlines until it hits the token limit. The free answer stays at 96: without a mask nothing stops the formatting.
+4. **Banning whitespace saves 44% of the tokens** (but see section 9: it also costs accuracy). 96 → 54 tokens for exactly the same data, so the writing time drops from about 1.5 s to about 0.8 s. It also rules out the whitespace loops where a model keeps writing newlines until it hits the token limit. The free answer stays at 96: without a mask nothing stops the formatting.
 5. **On this easy task the model obeyed without the mask.** Free JSON produced the same valid answer. The mask's value is the **guarantee** on harder inputs, which Phase 4 tests.
 6. **The whitespace setting is server-wide in vLLM 0.32.0.** Sending `"disable_any_whitespace": true` inside a request's `structured_outputs` had **no visible effect**: still 96 tokens, still pretty-printed. Only the startup flag worked. So StructFlow does not offer a per-request switch; the deployment turns it on for everyone.
 
@@ -165,6 +165,103 @@ The first call of each run is reported separately; the table shows the median of
 
 ---
 
+## Phase 4: StructFlow against the usual way, under load
+
+### 9. The benchmark
+
+**The question:** is StructFlow better than what most apps do today, and by how much?
+
+**The baseline** is the usual way: put the instructions in the prompt ("answer with one of …", "reply with only JSON"), parse the model's free text with a forgiving parser, and retry up to 3 times if the parse fails (temperature 0 first, 0.7 on retries). **StructFlow** answers the same examples through its router: the small softmax head for sentiment, LLM label scoring for topics, and schema-masked JSON for invoices.
+
+**Fairness:** both go through the same gateway, GPU and model; the baseline uses StructFlow's plain `generate` route, so only the method differs. The baseline's parsers accept the many ways a model phrases a right answer (`**Positive**`, "The sentiment is POSITIVE.", JSON inside code fences or chatty text).
+
+**Data:** three labelled tasks of 60 examples each, generated from templates with fixed seeds ([`bench/tasks.py`](../src/structflow/bench/tasks.py)). Some are awkward on purpose: negations ("Not bad at all…"), European amounts ("3.728,86 €"), and dates such as "August 8, 2026" that must become `2026-08-08`.
+
+**Setup:** everything on one pod (no tunnel): NVIDIA RTX PRO 6000 Blackwell (96 GB), Llama-3.1-8B-Instruct on vLLM with XGrammar (installed fresh on 2026-11-02; the exact version was not recorded), StructFlow's two DistilBERT heads on the same GPU. Closed loop at 1, 8 and 32 concurrent clients ([`bench/compare.py`](../src/structflow/bench/compare.py)). Raw results: [`benchmarks/results/`](../benchmarks/results/).
+
+**Results**
+
+| Task | System | Clients | Correct | Valid | Retried | Tokens | p50 ms | p99 ms | Req/s |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| sentiment | StructFlow | 1 | 98% | 100% | 0% | 0.0 | 10 | 14 | 108.7 |
+| sentiment | StructFlow | 8 | 98% | 100% | 0% | 0.0 | 14 | 84 | 342.2 |
+| sentiment | StructFlow | 32 | 98% | 100% | 0% | 0.0 | 35 | 63 | 655.3 |
+| sentiment | baseline | 1 | 100% | 100% | 0% | 3.0 | 44 | 46 | 22.8 |
+| sentiment | baseline | 8 | 100% | 100% | 0% | 3.0 | 60 | 85 | 129.5 |
+| sentiment | baseline | 32 | 100% | 100% | 0% | 3.0 | 90 | 133 | 286.8 |
+| topic | StructFlow | 1 | 100% | 100% | 0% | 2.2 | 34 | 45 | 28.2 |
+| topic | StructFlow | 8 | 100% | 100% | 0% | 2.2 | 53 | 79 | 139.7 |
+| topic | StructFlow | 32 | 100% | 100% | 0% | 2.2 | 85 | 136 | 285.7 |
+| topic | baseline | 1 | 100% | 100% | 0% | 2.3 | 34 | 45 | 27.2 |
+| topic | baseline | 8 | 100% | 100% | 0% | 2.3 | 53 | 82 | 132.9 |
+| topic | baseline | 32 | 100% | 100% | 0% | 2.3 | 96 | 148 | 238.0 |
+| invoice | StructFlow | 1 | 90% | 100% | 0% | 35.4 | 385 | 439 | 2.6 |
+| invoice | StructFlow | 8 | 90% | 100% | 0% | 35.5 | 390 | 460 | 19.0 |
+| invoice | StructFlow | 32 | 90% | 100% | 0% | 35.4 | 451 | 583 | 60.6 |
+| invoice | baseline | 1 | 90% | 100% | 0% | 35.3 | 378 | 389 | 2.6 |
+| invoice | baseline | 8 | 90% | 100% | 0% | 35.3 | 389 | 427 | 19.1 |
+| invoice | baseline | 32 | 90% | 100% | 0% | 35.3 | 442 | 703 | 52.0 |
+
+```mermaid
+%%{init: {"themeVariables": {"xyChart": {"plotColorPalette": "#1565C0"}}}}%%
+xychart-beta horizontal
+    title "Requests answered per second, 32 concurrent clients (higher is better)"
+    x-axis ["Sentiment · StructFlow", "Sentiment · baseline", "Topic · StructFlow", "Topic · baseline", "Invoice · StructFlow", "Invoice · baseline"]
+    y-axis "requests/s" 0 --> 750
+    bar [655.3, 286.8, 285.7, 238, 60.6, 52]
+```
+
+```mermaid
+%%{init: {"themeVariables": {"xyChart": {"plotColorPalette": "#1565C0"}}}}%%
+xychart-beta horizontal
+    title "Sentiment: median latency (lower is better)"
+    x-axis ["1 client · StructFlow", "1 client · baseline", "8 clients · StructFlow", "8 clients · baseline", "32 clients · StructFlow", "32 clients · baseline"]
+    y-axis "ms" 0 --> 100
+    bar [10.1, 43.9, 14.4, 59.6, 34.8, 90.5]
+```
+
+### 10. What the benchmark shows
+
+1. **The big win is routing.** For sentiment, the small head answered in **10 ms against 44 ms** for one client (4.4× faster) and handled **655 against 287 requests/s** at 32 clients (2.3×), with **zero LLM tokens**, so the GPU stays free for requests that need the LLM. It cost one answer in 60 (98% against 100%).
+2. **The baseline never needed a retry.** Llama-3.1-8B at temperature 0 followed "answer with one of …" and "reply with only JSON" every time on these tasks: 100% valid, 0% retried. So the retry tax the README originally warned about **did not appear** with this model and these inputs. Here the mask's guarantee was insurance that never had to pay out.
+3. **The mask costs nothing measurable under load.** Masked invoices matched the baseline on accuracy (90%) and tokens (35.4 against 35.3), and were slightly ahead at 32 clients (61 against 52 requests/s, p99 583 against 703 ms). One run, so treat the small gap as a hint, not a result.
+4. **LLM label scoring matches prompting** on topics: same accuracy, about the same tokens (2.2 against 2.3), slightly more throughput at 32 clients.
+5. **Neither system was perfect on invoices** (90% each). Since both produced valid JSON every time, the misses come from reading the messy text, not from the format.
+
+### 11. The whitespace trap
+
+Section 8 found that banning optional whitespace in JSON saves 44% of tokens. Phase 4 measured what it does to **accuracy**, on the same 60 invoices at 8 clients, changing only that one vLLM setting:
+
+```mermaid
+%%{init: {"themeVariables": {"xyChart": {"plotColorPalette": "#1565C0"}}}}%%
+xychart-beta
+    title "Invoice JSON: share of 60 answers correct (higher is better)"
+    x-axis ["StructFlow, whitespace allowed", "StructFlow, whitespace banned", "Baseline (prompt + parse)"]
+    y-axis "% correct" 0 --> 100
+    bar [90, 48.3, 90]
+```
+
+| Invoice JSON, 60 examples | Correct | Valid JSON | Tokens |
+|---|---:|---:|---:|
+| StructFlow, whitespace **allowed** | **90%** | 100% | 35.4 |
+| StructFlow, whitespace **banned** | **48%** | 100% | 29.1 |
+| Baseline (control, same both runs) | 90% | 100% | 35.3 |
+
+**Banning whitespace cut accuracy from 90% to 48%** while saving only 18% of tokens on this schema. Every wrong answer was still valid JSON, for example `{"vendor": ",Orchard Labs", ...}` with a stray comma inside the name. The likely cause: the model learned JSON written as `"key": "value"`, with a space; forbidding the space pushes it off the paths it knows, and its choices around that spot get distorted. The output still matches the schema, so no validator can catch it.
+
+**Lessons:**
+
+- **Never optimise tokens or speed without measuring accuracy.** Section 8 alone would have recommended this setting.
+- **A grammar constrains form, and form can still bend meaning.** Masks work best when they match how the model naturally writes.
+- StructFlow's recommended setup now keeps vLLM's default (whitespace allowed).
+
+### Caveats
+
+One run per configuration, 60 synthetic examples per task, one model at temperature 0, one GPU type. Small differences (under about 15%) could be noise. The runner records summaries, not each answer, so we can't yet say *which* examples each system got wrong; saving per-example outcomes is a cheap next improvement. The baseline's 0% retry rate is specific to this model and these tasks: a smaller model, a deeper schema or a higher temperature would likely make it fail and retry, which is where the guarantee should pay off. That is the obvious next experiment.
+
+---
+
 ## Still to measure
 
-- **Phase 4:** throughput and p50/p99 under concurrency, how TTFT grows as requests queue, head-to-head against a generate-and-parse baseline on harder inputs, and GPU-seconds saved.
+- **Harder conditions** where the baseline fails: a smaller model, deeply nested schemas, temperature above 0. That is where retries, and the guarantee that removes them, should show up.
+- **Repeat runs** to put error bars on the small differences.

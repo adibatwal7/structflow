@@ -11,15 +11,15 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-gateway-009688?logo=fastapi&logoColor=white)
 ![vLLM](https://img.shields.io/badge/vLLM-structured__outputs-30A2FF)
 ![XGrammar](https://img.shields.io/badge/XGrammar-token%20bitmasks-6A1B9A)
-![Status](https://img.shields.io/badge/status-phase%204%20%C2%B7%20benchmarks-F9A825)
-![Tests](https://img.shields.io/badge/tests-334%20passing-2E7D32)
+![Status](https://img.shields.io/badge/status-phase%205%20%C2%B7%20shipping-F9A825)
+![Tests](https://img.shields.io/badge/tests-389%20passing-2E7D32)
 
 *The fastest token is the one you never generate.*
 
 </div>
 
 > [!IMPORTANT]
-> StructFlow is being built in public, one phase at a time. **Phases 1–3 are done: the gateway, the small models, and vLLM + XGrammar on a real GPU. Phase 4 (benchmarks) is next.** The diagrams below describe the target architecture; the [roadmap](#roadmap) shows exactly what is real so far, and **[What I measured](docs/findings.md)** has the numbers.
+> StructFlow is being built in public, one phase at a time. **Phases 1–4 are done: the gateway, the small models, vLLM + XGrammar on a real GPU, and a benchmark against the usual prompt-and-parse approach. Phase 5 (Docker and CI) is next.** The diagrams below describe the target architecture; the [roadmap](#roadmap) shows exactly what is real so far, and **[What I measured](docs/findings.md)** has the numbers.
 
 ---
 
@@ -32,13 +32,20 @@
 | A JSON invoice record | `Here's the JSON: {"total": 42, "items": [` …and then it stops | JSON that always parses, enforced token by token |
 | An open-ended answer | An open-ended answer | An open-ended answer (nothing to constrain) |
 
+**What the benchmark found** ([full results](#benchmark-results)):
+
+- **Routing is the big win.** Sending a label the small model knows to the small model: **4.4× lower latency** (10 vs 44 ms) and **2.3× the throughput** at 32 clients, with **zero LLM tokens**, for one wrong answer in 60.
+- **The grammar mask costs nothing measurable**, even under load: same accuracy and tokens as prompting, slightly better tail latency.
+- **Llama-3.1-8B never needed a retry** on these tasks, so the guarantee was insurance that never had to pay out. The next experiment looks for where it does.
+- **The trap:** banning JSON whitespace saved tokens but **cut accuracy from 90% to 48%**. Valid JSON, wrong answers.
+
 ## Why this exists
 
 Most LLM applications don't want prose. They want a **label**, a **list of entities**, or a **JSON object with exact fields**. The common pattern is to let a large model write freely, then dig the answer out of the text. That pattern has three costs:
 
 - **It's slow.** Every generated token is a full pass through billions of parameters, and most of those tokens are filler.
 - **It's expensive.** GPU time is spent writing sentences nobody reads.
-- **It breaks, and the retries hurt the tail.** If 95% of responses parse, 1 in 20 requests runs twice. Your **P99 latency lands inside that retried group**, so it's at least double the normal latency.
+- **It can break, and the retries hurt the tail.** If 95% of responses parse, 1 in 20 requests runs twice, and your **P99 latency lands inside that retried group**. How often it breaks depends on the model and the task: in [our benchmark](#benchmark-results), Llama-3.1-8B at temperature 0 never broke on simple tasks; smaller models, deeper schemas and higher temperatures are where we expect it to (the next experiment).
 
 StructFlow removes the loop instead of making it faster.
 
@@ -118,6 +125,7 @@ flowchart TD
 - **Backpressure is explicit.** The encoder queues are bounded and LLM requests in flight are capped. When full, the gateway answers `503` with `Retry-After` at once instead of letting a queue silently inflate latency ([why it matters](docs/findings.md#a-bounded-queue-protects-the-tail)).
 - **Abandoned requests free memory.** A client disconnect (or the gateway's own deadline) cancels the upstream generation, so its KV-cache blocks go back to the pool. [Verified on a GPU](docs/findings.md#4-cancellation-reaches-the-gpu).
 - **vLLM stays private.** It sits on an internal network that only the gateway can reach.
+- **Every request is observable.** One JSON log line per request (route, trail, tokens, timings, error code) and Prometheus metrics at `/metrics`.
 
 ## Life of a structured request
 
@@ -177,7 +185,7 @@ Moving and applying the mask is cheap. The real costs are **CPU-side mask comput
 
 1. **Truncation.** A response cut off by `max_tokens` is an invalid prefix. "Always parses" holds only for `finish_reason == "stop"`, so StructFlow returns an explicit `output_truncated` error and tracks truncation as its own metric.
 2. **Distribution distortion.** Renormalizing at each step is not the same as conditioning on valid outputs. The mask enforces syntax; the prompt still has to carry the meaning, so the schema goes in the prompt too.
-3. **Whitespace loops.** JSON allows unlimited whitespace, and a model can emit newlines until it hits the cap. Even when it doesn't, pretty-printing costs tokens. Banning optional whitespace [cut one measured answer from 96 to 54 tokens](docs/findings.md#8-what-constrained-decoding-actually-costs). In vLLM 0.32 that is a server startup flag, so the recommended `vllm serve` command below turns it on.
+3. **Whitespace loops, and the cure that hurts.** JSON allows unlimited whitespace, and a model can emit newlines until it hits the cap. Banning optional whitespace (a vLLM startup flag) cut one answer from 96 to 54 tokens, but on 60 invoices it [cut accuracy from 90% to 48%](docs/findings.md#11-the-whitespace-trap): the model writes JSON with spaces, and forbidding them distorted its answers. StructFlow keeps vLLM's default and leans on `max_tokens` plus the `output_truncated` error instead.
 4. **Syntax is not truth.** A schema-valid object can still be wrong, and some JSON Schema keywords may not be enforceable by a given backend. Every output is post-validated. A narrow schema can even *push* the model into a wrong answer when the prompt gives it no way to say "none": [a real example](docs/findings.md#2-a-constraint-guarantees-the-shape-not-the-truth).
 
 </details>
@@ -206,7 +214,7 @@ xychart-beta
 <sub>"Unconstrained loop" = free generation, parse, and retry on failure (~5% of requests). The softmax head has no decode bar because it takes exactly zero decode steps.</sub>
 
 > [!NOTE]
-> These are **analytical estimates, not benchmarks.** Assumptions: FLOPs ≈ 2 × parameters × tokens (attention ignored); Llama-3.1-8B ≈ 8.0B parameters; encoder ≈ 150M parameters; an unconstrained answer of ≈ 15 tokens; 95% parse success, so ≈ 1.05 attempts per request. **Phase 4 replaces every number here with measured results.**
+> These are **analytical estimates, not benchmarks.** Assumptions: FLOPs ≈ 2 × parameters × tokens (attention ignored); Llama-3.1-8B ≈ 8.0B parameters; encoder ≈ 150M parameters; an unconstrained answer of ≈ 15 tokens; 95% parse success, so ≈ 1.05 attempts per request. **The measured version is in [Benchmark results](#benchmark-results)**: the routing win held up (4.4× lower latency), while the 5% retry rate assumed here did not appear for Llama-3.1-8B on these tasks.
 
 **The takeaway:**
 - The softmax head does **roughly 50–60× less compute** than either LLM path.
@@ -215,7 +223,7 @@ xychart-beta
 
 ## Measured so far
 
-Single-request experiments on real models. Details, methods and caveats: **[docs/findings.md](docs/findings.md)**.
+Every measurement so far, from single requests to the full benchmark. Details, methods and caveats: **[docs/findings.md](docs/findings.md)**.
 
 | Finding | Number |
 |---|---|
@@ -228,20 +236,49 @@ Single-request experiments on real models. Details, methods and caveats: **[docs
 | Client hang-up or gateway timeout | vLLM stops generating within one log window |
 | Grammar mask cost per token (JSON Schema, XGrammar) | **+0.1 ms** on 15.7 ms (< 1%) |
 | Compiling a never-seen grammar | **≈ 170 ms**, once, then cached |
-| Banning JSON whitespace | **96 → 54 tokens (−44%)**, ≈ 0.7 s saved per answer |
+| Banning JSON whitespace | **96 → 54 tokens (−44%)**, but accuracy **90% → 48%** |
+| Small head vs prompted LLM, sentiment, 32 clients | **655 vs 287 requests/s** |
+| Masked vs prompted JSON, accuracy and tokens | **90% vs 90%**, 35.4 vs 35.3 tokens |
+| Baseline retries needed (Llama-3.1-8B, temperature 0) | **0%** on all three tasks |
 
-## What Phase 4 will measure
+## Benchmark results
 
-| Metric | Why it matters |
-|---|---|
-| P50 / P99 end-to-end latency | The user-visible number, and the tail that retries destroy |
-| Time to first token (TTFT) | Exposes grammar compilation on cache misses and queueing |
-| Time per output token (TPOT) | Exposes per-step mask overhead |
-| Throughput (requests/s, tokens/s) | Capacity per GPU |
-| Structural parse failure rate | **Target: 0%** for `finish_reason == "stop"` |
-| Truncation rate | The one way constrained output can still be invalid |
-| Forward passes per request | The cleanest proxy for compute saved |
-| Estimated GPU-seconds saved | Against an unconstrained generate-and-parse baseline |
+StructFlow against the usual way (instructions in the prompt, a forgiving parser, up to 3 retries) on three labelled tasks of 60 examples each, at 1, 8 and 32 concurrent clients. Same GPU (an RTX PRO 6000), same model (Llama-3.1-8B-Instruct) and same gateway for both, so only the method differs. Every number below is generated from [`benchmarks/results/`](benchmarks/results/) by `python -m structflow.bench.charts`.
+
+```mermaid
+%%{init: {"themeVariables": {"xyChart": {"plotColorPalette": "#1565C0"}}}}%%
+xychart-beta horizontal
+    title "Requests answered per second, 32 concurrent clients (higher is better)"
+    x-axis ["Sentiment · StructFlow", "Sentiment · baseline", "Topic · StructFlow", "Topic · baseline", "Invoice · StructFlow", "Invoice · baseline"]
+    y-axis "requests/s" 0 --> 750
+    bar [655.3, 286.8, 285.7, 238, 60.6, 52]
+```
+
+```mermaid
+%%{init: {"themeVariables": {"xyChart": {"plotColorPalette": "#1565C0"}}}}%%
+xychart-beta horizontal
+    title "Sentiment: median latency (lower is better)"
+    x-axis ["1 client · StructFlow", "1 client · baseline", "8 clients · StructFlow", "8 clients · baseline", "32 clients · StructFlow", "32 clients · baseline"]
+    y-axis "ms" 0 --> 100
+    bar [10.1, 43.9, 14.4, 59.6, 34.8, 90.5]
+```
+
+```mermaid
+%%{init: {"themeVariables": {"xyChart": {"plotColorPalette": "#1565C0"}}}}%%
+xychart-beta
+    title "Invoice JSON: share of 60 answers correct (higher is better)"
+    x-axis ["StructFlow, whitespace allowed", "StructFlow, whitespace banned", "Baseline (prompt + parse)"]
+    y-axis "% correct" 0 --> 100
+    bar [90, 48.3, 90]
+```
+
+| Task | Correct (StructFlow / baseline) | Retries needed by the baseline | What it shows |
+|---|---|---|---|
+| Sentiment | 98% / 100% | 0% | The small head is 4.4× faster and serves 2.3× the load, with no LLM tokens |
+| Topic | 100% / 100% | 0% | LLM label scoring matches prompting; slightly more throughput |
+| Invoice → JSON | 90% / 90% | 0% | The mask costs nothing; both miss the same share of messy inputs |
+
+**Read with care:** one run each, synthetic data, one model at temperature 0. The full table, method and caveats are in **[docs/findings.md](docs/findings.md#phase-4-structflow-against-the-usual-way-under-load)**.
 
 ## API preview
 
@@ -339,8 +376,10 @@ uvicorn --factory structflow.gateway.app:create_app --port 8080
 ```bash
 vllm serve meta-llama/Llama-3.1-8B-Instruct --host 127.0.0.1 --port 8000 \
   --api-key "$VLLM_KEY" --max-model-len 8192 \
-  --structured-outputs-config '{"backend": "xgrammar", "disable_any_whitespace": true}'
+  --structured-outputs-config.backend xgrammar
 ```
+
+Leave JSON whitespace allowed (vLLM's default): banning it [cut invoice accuracy from 90% to 48%](docs/findings.md#11-the-whitespace-trap).
 
 If vLLM runs on another machine, reach it through an SSH tunnel rather than exposing it (`ssh -N -L 8000:127.0.0.1:8000 user@gpu-host`). Then point StructFlow at it:
 
@@ -356,6 +395,15 @@ uvicorn --factory structflow.gateway.app:create_app --port 8080
 ```bash
 python -m structflow.bench.load --task classify --rps 200 --duration 10
 ```
+
+**6. Benchmark it against prompt-and-parse**, then turn the results into tables and charts:
+
+```bash
+python -m structflow.bench.compare --concurrency 1,8,32 --json results.json
+python -m structflow.bench.charts results.json
+```
+
+**7. Watch it.** Every inference request prints one JSON log line, and Prometheus metrics (requests by route and outcome, latency, TTFT, tokens, fallbacks) are at `http://localhost:8080/metrics`.
 
 **Configuration.** Settings are read from `STRUCTFLOW_*` environment variables or `.env`, and validated at startup. A bad value refuses to boot instead of misbehaving later. [`.env.example`](.env.example) lists them all.
 
@@ -408,13 +456,15 @@ structflow/
 ├── src/structflow/
 │   ├── config.py                 ✅ typed, fail-fast settings
 │   ├── schemas/                  ✅ the wire contract: requests, responses, constraints, errors
-│   ├── gateway/                  ✅ FastAPI app, /v1/infer, health, request IDs, disconnects
+│   ├── gateway/                  ✅ FastAPI app, /v1/infer, health, request IDs, disconnects,
+│   │                                telemetry (JSON request log, /metrics)
 │   ├── routing/                  ✅ cheapest-first router, span grounding
 │   ├── engines/                  ✅ micro-batcher, HF softmax + span heads, limits,
 │   │                                vLLM backend with streaming and token timing
-│   ├── bench/                    ✅ open-loop load generator
-│   └── telemetry/                🗺️ tracing, metrics, drift (Phase 4)
-├── tests/                        ✅ 334 tests: unit, contract, engines, gateway, integration
+│   └── bench/                    ✅ load generator, benchmark tasks, StructFlow-vs-baseline
+│                                    runner, charts
+├── benchmarks/results/           ✅ raw benchmark results (JSON) and metrics
+├── tests/                        ✅ 389 tests: unit, contract, engines, gateway, integration
 └── deploy/                       🗺️ Dockerfile, docker-compose.yml (Phase 5)
 ```
 <sub>✅ built · 🚧 in progress · 🗺️ planned</sub>
@@ -427,8 +477,8 @@ timeline
     Phase 1 - Contracts : CDM theory : Pydantic v2 wire schemas : Typed settings
     Phase 2 - Gateway : FastAPI and the router : Softmax and span heads : Async micro-batching
     Phase 3 - Constrained engine : vLLM with XGrammar : LLM label scoring and extraction : KV cache and TTFT analysis
-    Phase 4 - Proof : Benchmark engine : P50 and P99 latency, TPOT, parse failures : Tracing and drift tracking
-    Phase 5 - Ship : Docker and Compose : Charts from measured data
+    Phase 4 - Proof : Benchmark against prompt-and-parse : Latency, throughput, accuracy, retries : Request logs and metrics
+    Phase 5 - Ship : Docker and Compose : CI
 ```
 
 **Phase 1 · Contracts** ✅
@@ -456,14 +506,19 @@ timeline
 - [x] Streaming: time to first token and time per output token on every LLM response
 - [x] Cost of the grammar mask, grammar compilation, and constrained JSON whitespace ([findings](docs/findings.md#8-what-constrained-decoding-actually-costs))
 
-**Phase 4 · Proof**
-- [ ] Benchmark engine against an unconstrained generate-and-parse baseline
-- [ ] Throughput, p50/p99 and TTFT under concurrency; KV-cache pressure
-- [ ] Request-lifecycle tracing and payload drift tracking
+**Phase 4 · Proof** ✅
+- [x] Labelled benchmark tasks (sentiment, topic, invoice JSON) with deliberately awkward inputs
+- [x] Runner: StructFlow vs prompt-parse-retry at 1, 8 and 32 concurrent clients; accuracy, validity, retries, tokens, p50/p99, throughput
+- [x] Telemetry: one JSON log line per request and Prometheus metrics at `/metrics`
+- [x] GPU run, findings, and README charts generated from the results ([findings](docs/findings.md#phase-4-structflow-against-the-usual-way-under-load))
 
 **Phase 5 · Ship**
-- [ ] Dockerfile and docker-compose: gateway + vLLM on a private network
-- [ ] Replace the estimate charts above with measured ones
+- [ ] Dockerfile and docker-compose: gateway + vLLM + Prometheus on a private network
+- [ ] CI: ruff, mypy and pytest on every push
+
+**Next experiments**
+- [ ] Harder conditions where prompt-and-parse breaks: a smaller model, deeper schemas, temperature above 0
+- [ ] Save each answer, not just summaries, to see which examples each system gets wrong
 
 ## Design decisions
 
@@ -476,7 +531,8 @@ timeline
 | `output_truncated` is an error, never a result | Keeps "always parses" literally true |
 | `STRUCTFLOW_` prefix and a `SecretStr` API key | No collisions with generic variables; keys never appear in logs |
 | Always stream from vLLM, answer the client in one piece | Token timings (TTFT, TPOT) on every response, with an unchanged API |
-| JSON whitespace is banned at vLLM startup, not per request | vLLM 0.32 ignored the per-request flag; a switch that silently does nothing is worse than none |
+| JSON whitespace stays allowed (vLLM's default) | Banning it cut invoice accuracy from 90% to 48%; and vLLM 0.32 ignored a per-request flag anyway, so StructFlow offers none |
+| Benchmark against a fair baseline | A forgiving parser and real retries, same model and GPU: a weak baseline would make any number meaningless |
 
 ## Standing on the shoulders of
 
