@@ -1,0 +1,32 @@
+[
+  {
+    "task": "invoice",
+    "system": "structflow",
+    "concurrency": 8,
+    "n": 60,
+    "accuracy": 0.9,
+    "valid_rate": 1.0,
+    "retry_rate": 0.0,
+    "mean_attempts": 1,
+    "tokens_per_request": 35.43333333333333,
+    "p50_ms": 393.80177296698093,
+    "p99_ms": 454.35413904488087,
+    "throughput_rps": 18.921405750853147,
+    "errors": {}
+  },
+  {
+    "task": "invoice",
+    "system": "baseline",
+    "concurrency": 8,
+    "n": 60,
+    "accuracy": 0.9,
+    "valid_rate": 1.0,
+    "retry_rate": 0.0,
+    "mean_attempts": 1,
+    "tokens_per_request": 35.333333333333336,
+    "p50_ms": 392.33354409225285,
+    "p99_ms": 409.7914642188698,
+    "throughput_rps": 19.088924468259865,
+    "errors": {}
+  }
+]

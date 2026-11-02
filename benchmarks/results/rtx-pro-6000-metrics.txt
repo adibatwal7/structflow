@@ -1,0 +1,155 @@
+# HELP structflow_requests_total Inference requests, by task, route and outcome (ok or an error code)
+# TYPE structflow_requests_total counter
+structflow_requests_total{outcome="ok",route="softmax_head",task="classify"} 185.0
+structflow_requests_total{outcome="ok",route="unconstrained_generation",task="generate"} 677.0
+structflow_requests_total{outcome="ok",route="llm_label_scoring",task="classify"} 185.0
+structflow_requests_total{outcome="ok",route="constrained_generation",task="structured"} 310.0
+# HELP structflow_requests_created Inference requests, by task, route and outcome (ok or an error code)
+# TYPE structflow_requests_created gauge
+structflow_requests_created{outcome="ok",route="softmax_head",task="classify"} 1.7936013107152295e+09
+structflow_requests_created{outcome="ok",route="unconstrained_generation",task="generate"} 1.79360131085212e+09
+structflow_requests_created{outcome="ok",route="llm_label_scoring",task="classify"} 1.7936013116533797e+09
+structflow_requests_created{outcome="ok",route="constrained_generation",task="structured"} 1.7936013122623188e+09
+# HELP structflow_request_seconds Time to answer an inference request, end to end
+# TYPE structflow_request_seconds histogram
+structflow_request_seconds_bucket{le="0.005",route="softmax_head",task="classify"} 0.0
+structflow_request_seconds_bucket{le="0.01",route="softmax_head",task="classify"} 82.0
+structflow_request_seconds_bucket{le="0.025",route="softmax_head",task="classify"} 144.0
+structflow_request_seconds_bucket{le="0.05",route="softmax_head",task="classify"} 176.0
+structflow_request_seconds_bucket{le="0.1",route="softmax_head",task="classify"} 184.0
+structflow_request_seconds_bucket{le="0.25",route="softmax_head",task="classify"} 184.0
+structflow_request_seconds_bucket{le="0.5",route="softmax_head",task="classify"} 185.0
+structflow_request_seconds_bucket{le="1.0",route="softmax_head",task="classify"} 185.0
+structflow_request_seconds_bucket{le="2.5",route="softmax_head",task="classify"} 185.0
+structflow_request_seconds_bucket{le="5.0",route="softmax_head",task="classify"} 185.0
+structflow_request_seconds_bucket{le="10.0",route="softmax_head",task="classify"} 185.0
+structflow_request_seconds_bucket{le="30.0",route="softmax_head",task="classify"} 185.0
+structflow_request_seconds_bucket{le="60.0",route="softmax_head",task="classify"} 185.0
+structflow_request_seconds_bucket{le="+Inf",route="softmax_head",task="classify"} 185.0
+structflow_request_seconds_count{route="softmax_head",task="classify"} 185.0
+structflow_request_seconds_sum{route="softmax_head",task="classify"} 3.640027999999998
+structflow_request_seconds_bucket{le="0.005",route="unconstrained_generation",task="generate"} 0.0
+structflow_request_seconds_bucket{le="0.01",route="unconstrained_generation",task="generate"} 0.0
+structflow_request_seconds_bucket{le="0.025",route="unconstrained_generation",task="generate"} 0.0
+structflow_request_seconds_bucket{le="0.05",route="unconstrained_generation",task="generate"} 168.0
+structflow_request_seconds_bucket{le="0.1",route="unconstrained_generation",task="generate"} 316.0
+structflow_request_seconds_bucket{le="0.25",route="unconstrained_generation",task="generate"} 370.0
+structflow_request_seconds_bucket{le="0.5",route="unconstrained_generation",task="generate"} 653.0
+structflow_request_seconds_bucket{le="1.0",route="unconstrained_generation",task="generate"} 677.0
+structflow_request_seconds_bucket{le="2.5",route="unconstrained_generation",task="generate"} 677.0
+structflow_request_seconds_bucket{le="5.0",route="unconstrained_generation",task="generate"} 677.0
+structflow_request_seconds_bucket{le="10.0",route="unconstrained_generation",task="generate"} 677.0
+structflow_request_seconds_bucket{le="30.0",route="unconstrained_generation",task="generate"} 677.0
+structflow_request_seconds_bucket{le="60.0",route="unconstrained_generation",task="generate"} 677.0
+structflow_request_seconds_bucket{le="+Inf",route="unconstrained_generation",task="generate"} 677.0
+structflow_request_seconds_count{route="unconstrained_generation",task="generate"} 677.0
+structflow_request_seconds_sum{route="unconstrained_generation",task="generate"} 149.97746199999997
+structflow_request_seconds_bucket{le="0.005",route="llm_label_scoring",task="classify"} 0.0
+structflow_request_seconds_bucket{le="0.01",route="llm_label_scoring",task="classify"} 0.0
+structflow_request_seconds_bucket{le="0.025",route="llm_label_scoring",task="classify"} 0.0
+structflow_request_seconds_bucket{le="0.05",route="llm_label_scoring",task="classify"} 93.0
+structflow_request_seconds_bucket{le="0.1",route="llm_label_scoring",task="classify"} 154.0
+structflow_request_seconds_bucket{le="0.25",route="llm_label_scoring",task="classify"} 184.0
+structflow_request_seconds_bucket{le="0.5",route="llm_label_scoring",task="classify"} 184.0
+structflow_request_seconds_bucket{le="1.0",route="llm_label_scoring",task="classify"} 185.0
+structflow_request_seconds_bucket{le="2.5",route="llm_label_scoring",task="classify"} 185.0
+structflow_request_seconds_bucket{le="5.0",route="llm_label_scoring",task="classify"} 185.0
+structflow_request_seconds_bucket{le="10.0",route="llm_label_scoring",task="classify"} 185.0
+structflow_request_seconds_bucket{le="30.0",route="llm_label_scoring",task="classify"} 185.0
+structflow_request_seconds_bucket{le="60.0",route="llm_label_scoring",task="classify"} 185.0
+structflow_request_seconds_bucket{le="+Inf",route="llm_label_scoring",task="classify"} 185.0
+structflow_request_seconds_count{route="llm_label_scoring",task="classify"} 185.0
+structflow_request_seconds_sum{route="llm_label_scoring",task="classify"} 11.512776
+structflow_request_seconds_bucket{le="0.005",route="constrained_generation",task="structured"} 0.0
+structflow_request_seconds_bucket{le="0.01",route="constrained_generation",task="structured"} 0.0
+structflow_request_seconds_bucket{le="0.025",route="constrained_generation",task="structured"} 0.0
+structflow_request_seconds_bucket{le="0.05",route="constrained_generation",task="structured"} 0.0
+structflow_request_seconds_bucket{le="0.1",route="constrained_generation",task="structured"} 0.0
+structflow_request_seconds_bucket{le="0.25",route="constrained_generation",task="structured"} 0.0
+structflow_request_seconds_bucket{le="0.5",route="constrained_generation",task="structured"} 300.0
+structflow_request_seconds_bucket{le="1.0",route="constrained_generation",task="structured"} 310.0
+structflow_request_seconds_bucket{le="2.5",route="constrained_generation",task="structured"} 310.0
+structflow_request_seconds_bucket{le="5.0",route="constrained_generation",task="structured"} 310.0
+structflow_request_seconds_bucket{le="10.0",route="constrained_generation",task="structured"} 310.0
+structflow_request_seconds_bucket{le="30.0",route="constrained_generation",task="structured"} 310.0
+structflow_request_seconds_bucket{le="60.0",route="constrained_generation",task="structured"} 310.0
+structflow_request_seconds_bucket{le="+Inf",route="constrained_generation",task="structured"} 310.0
+structflow_request_seconds_count{route="constrained_generation",task="structured"} 310.0
+structflow_request_seconds_sum{route="constrained_generation",task="structured"} 120.91171699999998
+# HELP structflow_request_seconds_created Time to answer an inference request, end to end
+# TYPE structflow_request_seconds_created gauge
+structflow_request_seconds_created{route="softmax_head",task="classify"} 1.793601310715281e+09
+structflow_request_seconds_created{route="unconstrained_generation",task="generate"} 1.793601310852158e+09
+structflow_request_seconds_created{route="llm_label_scoring",task="classify"} 1.793601311653426e+09
+structflow_request_seconds_created{route="constrained_generation",task="structured"} 1.7936013122623606e+09
+# HELP structflow_ttft_seconds Time to the first generated token (LLM routes only)
+# TYPE structflow_ttft_seconds histogram
+structflow_ttft_seconds_bucket{le="0.005",route="unconstrained_generation"} 0.0
+structflow_ttft_seconds_bucket{le="0.01",route="unconstrained_generation"} 0.0
+structflow_ttft_seconds_bucket{le="0.025",route="unconstrained_generation"} 198.0
+structflow_ttft_seconds_bucket{le="0.05",route="unconstrained_generation"} 562.0
+structflow_ttft_seconds_bucket{le="0.1",route="unconstrained_generation"} 653.0
+structflow_ttft_seconds_bucket{le="0.25",route="unconstrained_generation"} 660.0
+structflow_ttft_seconds_bucket{le="0.5",route="unconstrained_generation"} 677.0
+structflow_ttft_seconds_bucket{le="1.0",route="unconstrained_generation"} 677.0
+structflow_ttft_seconds_bucket{le="2.5",route="unconstrained_generation"} 677.0
+structflow_ttft_seconds_bucket{le="5.0",route="unconstrained_generation"} 677.0
+structflow_ttft_seconds_bucket{le="10.0",route="unconstrained_generation"} 677.0
+structflow_ttft_seconds_bucket{le="30.0",route="unconstrained_generation"} 677.0
+structflow_ttft_seconds_bucket{le="60.0",route="unconstrained_generation"} 677.0
+structflow_ttft_seconds_bucket{le="+Inf",route="unconstrained_generation"} 677.0
+structflow_ttft_seconds_count{route="unconstrained_generation"} 677.0
+structflow_ttft_seconds_sum{route="unconstrained_generation"} 29.00399954081513
+structflow_ttft_seconds_bucket{le="0.005",route="llm_label_scoring"} 0.0
+structflow_ttft_seconds_bucket{le="0.01",route="llm_label_scoring"} 0.0
+structflow_ttft_seconds_bucket{le="0.025",route="llm_label_scoring"} 61.0
+structflow_ttft_seconds_bucket{le="0.05",route="llm_label_scoring"} 151.0
+structflow_ttft_seconds_bucket{le="0.1",route="llm_label_scoring"} 183.0
+structflow_ttft_seconds_bucket{le="0.25",route="llm_label_scoring"} 184.0
+structflow_ttft_seconds_bucket{le="0.5",route="llm_label_scoring"} 184.0
+structflow_ttft_seconds_bucket{le="1.0",route="llm_label_scoring"} 185.0
+structflow_ttft_seconds_bucket{le="2.5",route="llm_label_scoring"} 185.0
+structflow_ttft_seconds_bucket{le="5.0",route="llm_label_scoring"} 185.0
+structflow_ttft_seconds_bucket{le="10.0",route="llm_label_scoring"} 185.0
+structflow_ttft_seconds_bucket{le="30.0",route="llm_label_scoring"} 185.0
+structflow_ttft_seconds_bucket{le="60.0",route="llm_label_scoring"} 185.0
+structflow_ttft_seconds_bucket{le="+Inf",route="llm_label_scoring"} 185.0
+structflow_ttft_seconds_count{route="llm_label_scoring"} 185.0
+structflow_ttft_seconds_sum{route="llm_label_scoring"} 7.762954968493432
+structflow_ttft_seconds_bucket{le="0.005",route="constrained_generation"} 0.0
+structflow_ttft_seconds_bucket{le="0.01",route="constrained_generation"} 0.0
+structflow_ttft_seconds_bucket{le="0.025",route="constrained_generation"} 68.0
+structflow_ttft_seconds_bucket{le="0.05",route="constrained_generation"} 254.0
+structflow_ttft_seconds_bucket{le="0.1",route="constrained_generation"} 309.0
+structflow_ttft_seconds_bucket{le="0.25",route="constrained_generation"} 309.0
+structflow_ttft_seconds_bucket{le="0.5",route="constrained_generation"} 310.0
+structflow_ttft_seconds_bucket{le="1.0",route="constrained_generation"} 310.0
+structflow_ttft_seconds_bucket{le="2.5",route="constrained_generation"} 310.0
+structflow_ttft_seconds_bucket{le="5.0",route="constrained_generation"} 310.0
+structflow_ttft_seconds_bucket{le="10.0",route="constrained_generation"} 310.0
+structflow_ttft_seconds_bucket{le="30.0",route="constrained_generation"} 310.0
+structflow_ttft_seconds_bucket{le="60.0",route="constrained_generation"} 310.0
+structflow_ttft_seconds_bucket{le="+Inf",route="constrained_generation"} 310.0
+structflow_ttft_seconds_count{route="constrained_generation"} 310.0
+structflow_ttft_seconds_sum{route="constrained_generation"} 12.107099306769669
+# HELP structflow_ttft_seconds_created Time to the first generated token (LLM routes only)
+# TYPE structflow_ttft_seconds_created gauge
+structflow_ttft_seconds_created{route="unconstrained_generation"} 1.7936013108522258e+09
+structflow_ttft_seconds_created{route="llm_label_scoring"} 1.7936013116535223e+09
+structflow_ttft_seconds_created{route="constrained_generation"} 1.7936013122624302e+09
+# HELP structflow_generated_tokens_total Tokens generated by the LLM
+# TYPE structflow_generated_tokens_total counter
+structflow_generated_tokens_total{route="unconstrained_generation"} 11837.0
+structflow_generated_tokens_total{route="llm_label_scoring"} 407.0
+structflow_generated_tokens_total{route="constrained_generation"} 10561.0
+# HELP structflow_generated_tokens_created Tokens generated by the LLM
+# TYPE structflow_generated_tokens_created gauge
+structflow_generated_tokens_created{route="unconstrained_generation"} 1.7936013108522737e+09
+structflow_generated_tokens_created{route="llm_label_scoring"} 1.7936013116535847e+09
+structflow_generated_tokens_created{route="constrained_generation"} 1.7936013122624779e+09
+# HELP structflow_fallbacks_total Requests a cheaper route could not serve, answered by a later one
+# TYPE structflow_fallbacks_total counter
+structflow_fallbacks_total{task="classify"} 185.0
+# HELP structflow_fallbacks_created Requests a cheaper route could not serve, answered by a later one
+# TYPE structflow_fallbacks_created gauge
+structflow_fallbacks_created{task="classify"} 1.7936013116536045e+09
