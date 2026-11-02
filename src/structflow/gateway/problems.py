@@ -71,6 +71,7 @@ def problem_response(
     request: Request, problem: ProblemDetails, headers: dict[str, str] | None = None
 ) -> JSONResponse:
     all_headers = dict(headers or {})
+    request.state.error_code = problem.code.value  # a note for the telemetry middleware
     if (rid := _request_id(request)) is not None:
         all_headers[HEADER] = (
             rid  # crash responses bypass the middleware, so add the ID here

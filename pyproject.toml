@@ -13,6 +13,7 @@ dependencies = [
     "pydantic-settings>=2.3",
     "httpx2>=2.13",
     "jsonschema>=4.23",
+    "prometheus-client>=0.20",
 ]
 
 [project.optional-dependencies]

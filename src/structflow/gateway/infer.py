@@ -44,5 +44,8 @@ async def infer(
 ) -> InferenceResponse:
     if body.request_id is not None:  # a request_id in the body takes precedence
         request.state.request_id = body.request_id
+    request.state.task = body.task  # notes for the telemetry middleware
     work = engine_router.handle(body, request_id=request.state.request_id)
-    return await unless_disconnected(request, work)
+    response = await unless_disconnected(request, work)
+    request.state.inference = response
+    return response

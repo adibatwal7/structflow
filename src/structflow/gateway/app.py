@@ -17,6 +17,8 @@ from .health import router as health_router
 from .infer import router as infer_router
 from .problems import install_problem_handlers
 from .request_id import RequestIdMiddleware
+from .telemetry import Telemetry, TelemetryMiddleware, configure_request_log
+from .telemetry import router as telemetry_router
 
 if TYPE_CHECKING:  # only for type checkers: importing torch at startup is slow
     from structflow.engines.hf_classifier import HFClassifier
@@ -124,8 +126,12 @@ def create_app(
     app.state.ready = False
     app.state.router = None
     app.state.startup_error = None
+    app.state.telemetry = Telemetry()
+    configure_request_log(resolved.log_level)
+    app.add_middleware(TelemetryMiddleware, telemetry=app.state.telemetry)
     app.add_middleware(RequestIdMiddleware)
     install_problem_handlers(app)
+    app.include_router(telemetry_router)
     app.include_router(health_router)
     app.include_router(infer_router)
     return app
