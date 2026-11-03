@@ -6,20 +6,23 @@
 
 **A high-throughput structured inference gateway. Every request goes down the cheapest path that still guarantees the shape of the answer.**
 
+[![CI](https://github.com/adibatwal7/structflow/actions/workflows/ci.yml/badge.svg)](https://github.com/adibatwal7/structflow/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)
 ![Pydantic](https://img.shields.io/badge/pydantic-v2-E92063?logo=pydantic&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-gateway-009688?logo=fastapi&logoColor=white)
 ![vLLM](https://img.shields.io/badge/vLLM-structured__outputs-30A2FF)
 ![XGrammar](https://img.shields.io/badge/XGrammar-token%20bitmasks-6A1B9A)
-![Status](https://img.shields.io/badge/status-phase%205%20%C2%B7%20shipping-F9A825)
+![Docker](https://img.shields.io/badge/docker-compose-2496ED?logo=docker&logoColor=white)
+![Status](https://img.shields.io/badge/status-phases%201%E2%80%935%20done-2E7D32)
 ![Tests](https://img.shields.io/badge/tests-389%20passing-2E7D32)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 *The fastest token is the one you never generate.*
 
 </div>
 
 > [!IMPORTANT]
-> StructFlow is being built in public, one phase at a time. **Phases 1–4 are done: the gateway, the small models, vLLM + XGrammar on a real GPU, and a benchmark against the usual prompt-and-parse approach. Phase 5 (Docker and CI) is next.** The diagrams below describe the target architecture; the [roadmap](#roadmap) shows exactly what is real so far, and **[What I measured](docs/findings.md)** has the numbers.
+> StructFlow is built in public, one phase at a time. **All five phases are done: the gateway, the small models, vLLM + XGrammar on a real GPU, a benchmark against the usual prompt-and-parse approach, and a Docker image, a Compose stack and CI to ship it.** The diagrams below describe the target architecture; the [roadmap](#roadmap) shows exactly what is built, and **[What I measured](docs/findings.md)** has the numbers.
 
 ---
 
@@ -124,7 +127,7 @@ flowchart TD
 - **The gateway doesn't batch LLM requests.** vLLM's continuous batching already does that better. The gateway forwards requests concurrently over one shared HTTP client.
 - **Backpressure is explicit.** The encoder queues are bounded and LLM requests in flight are capped. When full, the gateway answers `503` with `Retry-After` at once instead of letting a queue silently inflate latency ([why it matters](docs/findings.md#a-bounded-queue-protects-the-tail)).
 - **Abandoned requests free memory.** A client disconnect (or the gateway's own deadline) cancels the upstream generation, so its KV-cache blocks go back to the pool. [Verified on a GPU](docs/findings.md#4-cancellation-reaches-the-gpu).
-- **vLLM stays private.** It sits on an internal network that only the gateway can reach.
+- **vLLM stays private.** In the Compose stack it has no published port: only the gateway can reach it, over the internal network.
 - **Every request is observable.** One JSON log line per request (route, trail, tokens, timings, error code) and Prometheus metrics at `/metrics`.
 
 ## Life of a structured request
@@ -337,7 +340,44 @@ xychart-beta
 }
 ```
 
-## Quickstart (what runs today)
+## Quickstart
+
+### With Docker: one command
+
+All you need is Docker (Docker Desktop or OrbStack on a Mac). The gateway starts with fake models, so there is no GPU and nothing to download, and Prometheus collects its metrics.
+
+```bash
+git clone https://github.com/adibatwal7/structflow.git
+cd structflow
+docker compose up --build
+```
+
+```bash
+curl -s localhost:8080/v1/infer -H "Content-Type: application/json" \
+  -d '{"task":"classify","text":"The food was great","labels":["great","awful"]}'
+```
+
+- Gateway: `http://localhost:8080` (`/readyz`, `/v1/infer`, `/metrics`)
+- Prometheus: `http://localhost:9090`; try the query `structflow_requests_total`
+- Stop: `Ctrl+C`, then `docker compose down`
+
+Both ports are published on `127.0.0.1` only.
+
+**On a machine with an NVIDIA GPU** (and the NVIDIA Container Toolkit), the `gpu` profile adds vLLM on the private network. Put the settings in a `.env` file next to `compose.yaml`; git ignores it, and `.dockerignore` keeps it out of the image:
+
+```bash
+STRUCTFLOW_GENERATOR_BACKEND=vllm
+VLLM_API_KEY=<a long random string>
+HF_TOKEN=<your Hugging Face token, for the gated Llama model>
+```
+
+```bash
+docker compose --profile gpu up --build
+```
+
+The gateway waits until vLLM reports healthy; the first start downloads about 16 GB of weights. CI checks this profile's configuration on every push, but it hasn't been run end to end on a GPU VM yet ([roadmap](#roadmap)). A RunPod pod is itself a container, so there, start vLLM directly as in step 4 below.
+
+### From source
 
 **1. Install and test.** No GPU or model downloads needed: the default backends are fakes.
 
@@ -449,6 +489,7 @@ python -m structflow.bench.charts results.json
 structflow/
 ├── pyproject.toml                ✅ packaging, extras (dev, ml), tooling
 ├── .env.example                  ✅ every setting, documented
+├── LICENSE                       ✅ MIT
 ├── docs/
 │   ├── 01-cdm-theory.md          ✅ decoding regimes, masks, cost model
 │   ├── findings.md               ✅ what I measured, with methods
@@ -465,7 +506,11 @@ structflow/
 │                                    runner, charts
 ├── benchmarks/results/           ✅ raw benchmark results (JSON) and metrics
 ├── tests/                        ✅ 389 tests: unit, contract, engines, gateway, integration
-└── deploy/                       🗺️ Dockerfile, docker-compose.yml (Phase 5)
+├── scripts/                      ✅ one-off measurement scripts
+├── Dockerfile                    ✅ multi-stage image: non-root, healthcheck
+├── compose.yaml                  ✅ gateway + Prometheus; vLLM behind the gpu profile
+├── deploy/prometheus.yml         ✅ what Prometheus scrapes, and how often
+└── .github/workflows/ci.yml      ✅ lint, types, tests (3.12 + 3.14), image smoke test
 ```
 <sub>✅ built · 🚧 in progress · 🗺️ planned</sub>
 
@@ -512,11 +557,13 @@ timeline
 - [x] Telemetry: one JSON log line per request and Prometheus metrics at `/metrics`
 - [x] GPU run, findings, and README charts generated from the results ([findings](docs/findings.md#phase-4-structflow-against-the-usual-way-under-load))
 
-**Phase 5 · Ship**
-- [ ] Dockerfile and docker-compose: gateway + vLLM + Prometheus on a private network
-- [ ] CI: ruff, mypy and pytest on every push
+**Phase 5 · Ship** ✅
+- [x] Dockerfile: multi-stage build, non-root user, healthcheck; a 287 MB image
+- [x] Compose: gateway + Prometheus with one command; vLLM behind a `gpu` profile, reachable only from the gateway
+- [x] CI on every push: ruff, mypy and pytest on Python 3.12 and 3.14, then an image build and smoke test
 
 **Next experiments**
+- [ ] Run the Compose `gpu` profile end to end on a GPU VM
 - [ ] Harder conditions where prompt-and-parse breaks: a smaller model, deeper schemas, temperature above 0
 - [ ] Save each answer, not just summaries, to see which examples each system gets wrong
 
@@ -533,6 +580,17 @@ timeline
 | Always stream from vLLM, answer the client in one piece | Token timings (TTFT, TPOT) on every response, with an unchanged API |
 | JSON whitespace stays allowed (vLLM's default) | Banning it cut invoice accuracy from 90% to 48%; and vLLM 0.32 ignored a per-request flag anyway, so StructFlow offers none |
 | Benchmark against a fair baseline | A forgiving parser and real retries, same model and GPU: a weak baseline would make any number meaningless |
+| The container runs as a numeric non-root user | A break-in doesn't get root, and Kubernetes can only verify "not root" from a number |
+| vLLM has no published port; everything else binds to `127.0.0.1` | Only the gateway reaches the model server, and nothing is exposed to the network by accident |
+| CI only checks, never fixes (`ruff format --check`, no `--fix`) | A fix made on a throwaway CI machine never reaches the repo; the build has to fail instead |
+## What I learned
+
+- **A constraint guarantees the syntax, not the truth.** When the schema allowed only `PRODUCT` and `PRICE`, the model labelled "Maria Lopez" a `PRICE`. Grounding couldn't catch it, because the name really is in the text. The fix was in the prompt: give the model a way to say "none of these" ([findings §2](docs/findings.md#2-a-constraint-guarantees-the-shape-not-the-truth)).
+- **Never trade correctness for token savings without measuring both.** Banning JSON whitespace cut tokens by 44% on one prompt, but on the invoice benchmark it cut accuracy from 90% to 48% while saving only 18% of tokens. Every wrong answer was still valid JSON, like a vendor named `",Orchard Labs"` ([findings §11](docs/findings.md#11-the-whitespace-trap)).
+- **Failing fast beats queuing.** At 400 requests/s, a queue of 256 answered 7% more requests than a queue of 16, but its p99 was almost 10× worse (782 vs 80 ms). A quick `503` with `Retry-After` keeps latency predictable.
+- **An honest baseline shows where constraints matter.** Llama-3.1-8B at temperature 0 needed zero retries on my tasks, and masked and prompted JSON were equally accurate (90%). The wins came from routing to small heads (655 vs 287 requests/s on sentiment) and a shorter tail. I expect the guarantee to pay off with smaller models, deeper schemas and higher temperatures; that is the next experiment.
+- **Post-mask logprobs measure relative preference, not belief.** vLLM applies the grammar mask before the softmax, so a label's score only compares it with the other allowed labels. It can't say "none of these fit".
+- **Shipping is its own skill.** CI must check, never fix: `ruff check --fix` would have passed the build while the error stayed in the repo. `.dockerignore` patterns don't match in subfolders the way `.gitignore` patterns do. And rented GPUs fail in unglamorous ways: SSH tunnels drop mid-run, a pod without a volume loses its 16 GB of weights when it stops, and the card you want is sometimes sold out.
 
 ## Standing on the shoulders of
 
@@ -541,11 +599,15 @@ timeline
 - [llguidance](https://github.com/guidance-ai/llguidance): an alternative structured-output backend
 - [Pydantic](https://docs.pydantic.dev/), [FastAPI](https://fastapi.tiangolo.com/) and [Hugging Face Transformers](https://github.com/huggingface/transformers)
 
+## License
+
+[MIT](LICENSE) © 2026 Aditya Batwal
+
 ---
 
 <div align="center">
 
 Built in public by [Aditya Batwal](https://github.com/adibatwal7) as a deep dive into inference systems.<br/>
-If the idea resonates, ⭐ the repo and follow along as each phase lands.
+If the idea resonates, ⭐ the repo and follow along as the next experiments land.
 
 </div>

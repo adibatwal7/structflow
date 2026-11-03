@@ -6,6 +6,7 @@ build-backend = "hatchling.build"
 name = "structflow"
 requires-python = ">=3.12"
 version = "0.1.0"
+license = "MIT"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.29",
