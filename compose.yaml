@@ -1,0 +1,77 @@
+# StructFlow, the whole stack.
+#
+#   docker compose up --build                  # laptop: gateway (fake models) + Prometheus
+#   docker compose --profile gpu up --build    # GPU machine: adds vLLM (set .env first)
+#
+# Only the gateway (8080) and Prometheus (9090) are published, and only on this
+# machine (127.0.0.1). vLLM has no published port: only the gateway can reach it.
+name: structflow
+
+services:
+  gateway:
+    build:
+      context: .
+      args:
+        EXTRAS: ${STRUCTFLOW_IMAGE_EXTRAS:-}
+    image: structflow:local
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      STRUCTFLOW_GENERATOR_BACKEND: ${STRUCTFLOW_GENERATOR_BACKEND:-fake}
+      STRUCTFLOW_VLLM_BASE_URL: http://vllm:8000/v1
+      STRUCTFLOW_VLLM_API_KEY: ${VLLM_API_KEY:-EMPTY}
+      STRUCTFLOW_MODEL_NAME: ${MODEL_NAME:-meta-llama/Llama-3.1-8B-Instruct}
+      STRUCTFLOW_CLASSIFIER_BACKEND: ${STRUCTFLOW_CLASSIFIER_BACKEND:-fake}
+      STRUCTFLOW_SPAN_BACKEND: ${STRUCTFLOW_SPAN_BACKEND:-fake}
+    volumes:
+      - gateway-models:/home/app/.cache/huggingface
+    depends_on:
+      vllm:
+        condition: service_healthy
+        required: false  # without the gpu profile there is no vLLM: start anyway
+    restart: unless-stopped
+
+  vllm:
+    profiles: [gpu]
+    image: vllm/vllm-openai:${VLLM_VERSION:-v0.32.0}
+    command:
+      - --model=${MODEL_NAME:-meta-llama/Llama-3.1-8B-Instruct}
+      - --host=0.0.0.0
+      - --port=8000
+      - --max-model-len=8192
+      - --gpu-memory-utilization=0.85
+      - --structured-outputs-config.backend=xgrammar
+    environment:
+      VLLM_API_KEY: ${VLLM_API_KEY:-}
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - vllm-models:/root/.cache/huggingface
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 15s
+      timeout: 5s
+      retries: 40
+      start_period: 120s
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      - gateway
+    restart: unless-stopped
+
+volumes:
+  gateway-models:  # downloaded small models survive restarts
+  vllm-models:     # so does the 16 GB Llama download
